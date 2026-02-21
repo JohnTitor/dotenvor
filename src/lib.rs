@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+mod env;
+mod error;
+mod loader;
+mod model;
+mod parser;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use env::TargetEnv;
+pub use error::{Error, ParseError, ParseErrorKind};
+pub use loader::{EnvLoader, dotenv, from_filename, from_path, from_paths};
+pub use model::{Encoding, Entry, LoadReport};
+pub use parser::{parse_bytes, parse_reader, parse_str};
