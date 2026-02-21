@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
@@ -27,14 +28,52 @@ pub(crate) fn parse_str_with_source(
     input: &str,
     source: Option<&Path>,
 ) -> Result<Vec<Entry>, ParseError> {
+    let normalized = normalize_newlines(input);
+    let input = normalized.as_ref();
+
     let mut entries = Vec::new();
     let mut by_key = HashMap::<String, usize>::new();
 
-    for (idx, raw_line) in input.lines().enumerate() {
-        let line_num = idx as u32 + 1;
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        let parsed = parse_line(line, line_num, source)?;
+    let mut offset = 0usize;
+    let mut line_num = 1u32;
+    let bytes = input.as_bytes();
+
+    while offset < bytes.len() {
+        let statement_start = offset;
+        let statement_line = line_num;
+        let mut idx = offset;
+        let mut newline_count = 0u32;
+        let mut active_quote: Option<u8> = None;
+        let mut previous: Option<u8> = None;
+
+        while idx < bytes.len() {
+            let byte = bytes[idx];
+
+            if byte == b'\n' {
+                newline_count += 1;
+                if active_quote.is_none() {
+                    break;
+                }
+            } else if let Some(quote) = active_quote {
+                if byte == quote && previous != Some(b'\\') {
+                    active_quote = None;
+                }
+            } else if byte == b'"' || byte == b'\'' || byte == b'`' {
+                active_quote = Some(byte);
+            }
+
+            previous = Some(byte);
+            idx += 1;
+        }
+
+        let statement = &input[statement_start..idx];
+        let parsed = parse_line(statement, statement_line, source)?;
         let Some(entry) = parsed else {
+            if idx < bytes.len() && bytes[idx] == b'\n' {
+                idx += 1;
+            }
+            line_num += newline_count;
+            offset = idx;
             continue;
         };
 
@@ -44,9 +83,36 @@ pub(crate) fn parse_str_with_source(
             by_key.insert(entry.key.clone(), entries.len());
             entries.push(entry);
         }
+
+        if idx < bytes.len() && bytes[idx] == b'\n' {
+            idx += 1;
+        }
+        line_num += newline_count;
+        offset = idx;
     }
 
     Ok(entries)
+}
+
+fn normalize_newlines(input: &str) -> Cow<'_, str> {
+    if !input.contains('\r') {
+        return Cow::Borrowed(input);
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            out.push('\n');
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+
+    Cow::Owned(out)
 }
 
 fn parse_line(
@@ -113,6 +179,9 @@ fn parse_value(input: &str, line_num: u32, column: u32) -> Result<String, ParseE
     if input.starts_with('"') {
         return parse_double_quoted(input, line_num, column);
     }
+    if input.starts_with('`') {
+        return parse_backtick_quoted(input, line_num, column);
+    }
 
     let value = input
         .split_once('#')
@@ -123,9 +192,25 @@ fn parse_value(input: &str, line_num: u32, column: u32) -> Result<String, ParseE
 }
 
 fn parse_single_quoted(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
+    parse_literal_quoted(input, '\'', line_num, column)
+}
+
+fn parse_backtick_quoted(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
+    parse_literal_quoted(input, '`', line_num, column)
+}
+
+fn parse_literal_quoted(
+    input: &str,
+    quote: char,
+    line_num: u32,
+    column: u32,
+) -> Result<String, ParseError> {
     let mut closing_idx = None;
     for (idx, ch) in input.char_indices().skip(1) {
-        if ch == '\'' {
+        if ch == quote {
+            if input.as_bytes().get(idx.saturating_sub(1)) == Some(&b'\\') {
+                continue;
+            }
             closing_idx = Some(idx);
             break;
         }
@@ -281,5 +366,66 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_multiline_quoted_values() {
+        let input = "MULTI_DOUBLE=\"THIS\nIS\nA\nMULTILINE\nSTRING\"\n\
+                     MULTI_SINGLE='THIS\nIS\nA\nMULTILINE\nSTRING'\n\
+                     AFTER=after\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].key, "MULTI_DOUBLE");
+        assert_eq!(parsed[0].value, "THIS\nIS\nA\nMULTILINE\nSTRING");
+        assert_eq!(parsed[1].key, "MULTI_SINGLE");
+        assert_eq!(parsed[1].value, "THIS\nIS\nA\nMULTILINE\nSTRING");
+        assert_eq!(parsed[2].key, "AFTER");
+        assert_eq!(parsed[2].value, "after");
+    }
+
+    #[test]
+    fn parses_multiline_backtick_values() {
+        let input = "MULTI_BACKTICK=`THIS\nIS\nA\n\"MULTILINE'S\"\nSTRING`\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].key, "MULTI_BACKTICK");
+        assert_eq!(parsed[0].value, "THIS\nIS\nA\n\"MULTILINE'S\"\nSTRING");
+    }
+
+    #[test]
+    fn keeps_escaped_single_quotes_inside_multiline_single_quote() {
+        let input = "OPTION_K='line one\nthis is \\'quoted\\'\none more line'\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].key, "OPTION_K");
+        assert_eq!(
+            parsed[0].value,
+            "line one\nthis is \\'quoted\\'\none more line"
+        );
+    }
+
+    #[test]
+    fn parses_comment_after_multiline_quote() {
+        let input = "A=\"line 1\nline 2\" # trailing comment\nB=2\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "A");
+        assert_eq!(parsed[0].value, "line 1\nline 2");
+        assert_eq!(parsed[1].key, "B");
+        assert_eq!(parsed[1].value, "2");
+    }
+
+    #[test]
+    fn parses_crlf_newlines_in_multiline_quotes() {
+        let input = "A=\"line1\r\nline2\"\r\nB=ok\r\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].value, "line1\nline2");
+        assert_eq!(parsed[1].value, "ok");
     }
 }
