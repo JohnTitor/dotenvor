@@ -114,7 +114,7 @@ impl EnvLoader {
     }
 
     pub fn parse_only(&self) -> Result<Vec<Entry>, Error> {
-        let (mut entries, _) = self.collect_entries()?;
+        let (mut entries, _) = self.collect_entries(true)?;
         self.apply_substitution(&mut entries);
         self.log(&format!(
             "parsed {} entr{}",
@@ -125,7 +125,7 @@ impl EnvLoader {
     }
 
     pub fn load(&mut self) -> Result<LoadReport, Error> {
-        let (mut entries, files_read) = self.collect_entries()?;
+        let (mut entries, files_read) = self.collect_entries(false)?;
         self.apply_substitution(&mut entries);
         let mut report = LoadReport {
             files_read,
@@ -151,17 +151,31 @@ impl EnvLoader {
         Ok(report)
     }
 
-    fn collect_entries(&self) -> Result<(Vec<Entry>, usize), Error> {
+    fn collect_entries(&self, include_source: bool) -> Result<(Vec<Entry>, usize), Error> {
+        let paths = self.effective_paths()?;
+        if paths.len() == 1 {
+            let path = &paths[0];
+            self.log(&format!("reading {}", path.display()));
+            let bytes = std::fs::read(path)?;
+            let content = decode(&bytes, self.encoding)?;
+            let parsed = parse_str_with_source(content, include_source.then_some(path.as_path()))
+                .map_err(Error::from)?;
+            return Ok((parsed, 1));
+        }
+
         let mut merged_entries = Vec::new();
         let mut by_key = HashMap::<String, usize>::new();
         let mut files_read = 0usize;
 
-        for path in self.effective_paths()? {
+        for path in paths {
             self.log(&format!("reading {}", path.display()));
             let bytes = std::fs::read(&path)?;
             files_read += 1;
             let content = decode(&bytes, self.encoding)?;
-            let parsed = parse_str_with_source(content, Some(&path)).map_err(Error::from)?;
+            let parsed = parse_str_with_source(content, include_source.then_some(path.as_path()))
+                .map_err(Error::from)?;
+            merged_entries.reserve(parsed.len());
+            by_key.reserve(parsed.len());
 
             for entry in parsed {
                 if let Some(existing_idx) = by_key.get(&entry.key).copied() {
