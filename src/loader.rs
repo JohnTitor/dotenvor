@@ -29,7 +29,8 @@ where
 
 /// Load a dotenv file by filename from the current working directory.
 pub fn from_filename(name: &str) -> Result<LoadReport, Error> {
-    from_path(PathBuf::from(name))
+    let mut loader = EnvLoader::new().path(name).search_upward(true);
+    loader.load()
 }
 
 /// Builder-style dotenv loader.
@@ -38,6 +39,7 @@ pub struct EnvLoader {
     paths: Vec<PathBuf>,
     encoding: Encoding,
     override_existing: bool,
+    search_upward: bool,
     substitution_mode: SubstitutionMode,
     verbose: bool,
     quiet: bool,
@@ -71,6 +73,11 @@ impl EnvLoader {
 
     pub fn override_existing(mut self, override_existing: bool) -> Self {
         self.override_existing = override_existing;
+        self
+    }
+
+    pub fn search_upward(mut self, search_upward: bool) -> Self {
+        self.search_upward = search_upward;
         self
     }
 
@@ -149,7 +156,7 @@ impl EnvLoader {
         let mut by_key = HashMap::<String, usize>::new();
         let mut files_read = 0usize;
 
-        for path in self.effective_paths() {
+        for path in self.effective_paths()? {
             self.log(&format!("reading {}", path.display()));
             let bytes = std::fs::read(&path)?;
             files_read += 1;
@@ -180,12 +187,19 @@ impl EnvLoader {
         }
     }
 
-    fn effective_paths(&self) -> Vec<PathBuf> {
-        if self.paths.is_empty() {
+    fn effective_paths(&self) -> Result<Vec<PathBuf>, Error> {
+        let requested_paths = if self.paths.is_empty() {
             vec![PathBuf::from(".env")]
         } else {
             self.paths.clone()
+        };
+
+        if !self.search_upward {
+            return Ok(requested_paths);
         }
+
+        let start_dir = std::env::current_dir()?;
+        Ok(resolve_paths_upward_from(&start_dir, &requested_paths))
     }
 
     fn logging_enabled(&self) -> bool {
@@ -205,6 +219,7 @@ impl Default for EnvLoader {
             paths: Vec::new(),
             encoding: Encoding::Utf8,
             override_existing: false,
+            search_upward: false,
             substitution_mode: SubstitutionMode::Disabled,
             verbose: false,
             quiet: false,
@@ -217,6 +232,31 @@ fn decode(bytes: &[u8], encoding: Encoding) -> Result<&str, Error> {
     match encoding {
         Encoding::Utf8 => Ok(std::str::from_utf8(bytes)?),
     }
+}
+
+fn resolve_paths_upward_from(start_dir: &Path, requested_paths: &[PathBuf]) -> Vec<PathBuf> {
+    requested_paths
+        .iter()
+        .map(|requested| resolve_upward_path(start_dir, requested))
+        .collect()
+}
+
+fn resolve_upward_path(start_dir: &Path, requested: &Path) -> PathBuf {
+    if requested.is_absolute() {
+        return requested.to_path_buf();
+    }
+
+    let fallback = start_dir.join(requested);
+    let mut current = Some(start_dir);
+    while let Some(dir) = current {
+        let candidate = dir.join(requested);
+        if candidate.is_file() {
+            return candidate;
+        }
+        current = dir.parent();
+    }
+
+    fallback
 }
 
 struct SubstitutionResolver<'a> {
@@ -378,12 +418,16 @@ fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
-    use super::EnvLoader;
+    use super::{EnvLoader, resolve_upward_path};
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn logging_disabled_by_default() {
         let loader = EnvLoader::new();
         assert!(!loader.logging_enabled());
+        assert!(!loader.search_upward);
     }
 
     #[test]
@@ -396,5 +440,63 @@ mod tests {
     fn quiet_overrides_verbose() {
         let loader = EnvLoader::new().verbose(true).quiet(true);
         assert!(!loader.logging_enabled());
+    }
+
+    #[test]
+    fn search_upward_builder_sets_flag() {
+        let loader = EnvLoader::new().search_upward(true);
+        assert!(loader.search_upward);
+    }
+
+    #[test]
+    fn resolve_upward_path_uses_nearest_ancestor() {
+        let root = make_temp_dir("resolve-upward-nearest");
+        let parent = root.join("parent");
+        let child = parent.join("child");
+        std::fs::create_dir_all(&child).expect("failed to create child dir");
+
+        let root_file = root.join(".env");
+        let parent_file = parent.join(".env");
+        std::fs::write(&root_file, "ROOT=1\n").expect("failed to write root file");
+        std::fs::write(&parent_file, "PARENT=1\n").expect("failed to write parent file");
+
+        let resolved = resolve_upward_path(&child, Path::new(".env"));
+        assert_eq!(resolved, parent_file);
+    }
+
+    #[test]
+    fn resolve_upward_path_returns_local_candidate_when_missing() {
+        let root = make_temp_dir("resolve-upward-missing");
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).expect("failed to create child dir");
+
+        let resolved = resolve_upward_path(&child, Path::new(".env"));
+        assert_eq!(resolved, child.join(".env"));
+    }
+
+    #[test]
+    fn resolve_upward_path_keeps_absolute_paths() {
+        let root = make_temp_dir("resolve-upward-absolute");
+        let absolute = root.join(".env");
+        std::fs::write(&absolute, "ABS=1\n").expect("failed to write absolute file");
+        let unrelated = root.join("unrelated");
+        std::fs::create_dir_all(&unrelated).expect("failed to create unrelated dir");
+
+        let resolved = resolve_upward_path(&unrelated, &absolute);
+        assert_eq!(resolved, absolute);
+    }
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        path.push(format!(
+            "dotenvor-loader-tests-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("failed to create temp dir");
+        path
     }
 }

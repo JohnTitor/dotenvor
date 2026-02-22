@@ -1,0 +1,109 @@
+# dotenvor
+
+`dotenvor` is a small, fast `.env` parser and loader for Rust.
+
+It focuses on predictable behavior, low dependency overhead, and an ergonomic API (`EnvLoader` + convenience functions).
+
+## Highlights
+
+- Fast parser for common `.env` syntax
+- Builder-style loader with multi-file precedence
+- Optional variable substitution (`$VAR`, `${VAR}`)
+- Optional upward search for `.env` files
+- Process-env or in-memory targets for safer tests
+- Quiet/verbose logging controls
+
+## Installation
+
+```toml
+[dependencies]
+dotenvor = "0.1"
+```
+
+## Quick Start
+
+### Load into the process environment
+
+```rust
+use dotenvor::dotenv;
+
+// Looks for ".env" and searches parent directories if needed.
+let report = dotenv()?;
+println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
+# Ok::<(), dotenvor::Error>(())
+```
+
+### Builder API with memory target
+
+```rust
+use dotenvor::{EnvLoader, SubstitutionMode, TargetEnv};
+
+let mut loader = EnvLoader::new()
+    .path(".env")
+    .search_upward(true)
+    .substitution_mode(SubstitutionMode::Expand)
+    .override_existing(false)
+    .target(TargetEnv::memory());
+
+let report = loader.load()?;
+let env = loader.target_env().as_memory().expect("memory target");
+
+println!("files_read={}", report.files_read);
+println!("DATABASE_URL={:?}", env.get("DATABASE_URL"));
+# Ok::<(), dotenvor::Error>(())
+```
+
+### Parse only
+
+```rust
+use dotenvor::parse_str;
+
+let entries = parse_str("A=1\nB=\"hello\"\n")?;
+assert_eq!(entries.len(), 2);
+# Ok::<(), dotenvor::Error>(())
+```
+
+## Implemented Behavior
+
+### Parsing
+
+- `KEY=VALUE` pairs
+- Whitespace trimming around keys and values
+- Empty values (`FOO=`)
+- Comments with `#` outside quotes
+- Single quotes, double quotes, and backticks
+- Double-quoted escapes: `\n`, `\r`, `\t`, `\\`, `\"`
+- Optional `export` prefix
+- Duplicate keys: last value wins
+- Reader, string, and bytes parsing APIs
+- Multiline quoted values (including PEM-style blocks)
+
+### Loading
+
+- Multi-file loading with deterministic precedence
+- `override_existing(false)` by default
+- Load target can be process env or in-memory map
+- Upward file search support
+  - `dotenv()` / `from_filename(...)`: upward search enabled
+  - `EnvLoader`: upward search disabled by default (enable with `.search_upward(true)`)
+
+### Substitution
+
+- Optional mode: `SubstitutionMode::Expand`
+- Expands `$VAR` and `${VAR}`
+- Supports chained and forward references
+- Falls back to current target environment values when needed
+
+### Logging
+
+- `.verbose(true)` enables loader diagnostics on stderr
+- `.quiet(true)` suppresses diagnostics
+
+## License
+
+Licensed under either of:
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.

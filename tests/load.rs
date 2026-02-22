@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dotenvor::{EnvLoader, Error, ParseErrorKind, SubstitutionMode, TargetEnv};
@@ -190,6 +191,49 @@ fn substitution_preserves_unknown_placeholders() {
     );
 }
 
+#[test]
+fn search_upward_true_finds_parent_file() {
+    let dir = make_temp_dir("search-upward-true");
+    let parent = dir.join("parent");
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).expect("failed to create child dir");
+    write_file(&parent.join(".env"), "A=upward\n");
+
+    let (report, target) = with_current_dir(&child, || {
+        let mut loader = EnvLoader::new()
+            .search_upward(true)
+            .target(TargetEnv::memory());
+        let report = loader.load().expect("load should succeed");
+        let target = loader.into_target();
+        (report, target)
+    });
+
+    assert_eq!(report.files_read, 1);
+    assert_eq!(report.loaded, 1);
+    assert_eq!(report.skipped_existing, 0);
+    let map = target.as_memory().expect("memory target");
+    assert_eq!(map.get("A").expect("A should exist"), "upward");
+}
+
+#[test]
+fn search_upward_false_does_not_walk_parents() {
+    let dir = make_temp_dir("search-upward-false");
+    let parent = dir.join("parent");
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).expect("failed to create child dir");
+    write_file(&parent.join(".env"), "A=upward\n");
+
+    let err = with_current_dir(&child, || {
+        let mut loader = EnvLoader::new().target(TargetEnv::memory());
+        loader.load().expect_err("expected I/O error")
+    });
+
+    match err {
+        Error::Io(_) => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
 fn make_temp_dir(name: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let nanos = SystemTime::now()
@@ -203,4 +247,33 @@ fn make_temp_dir(name: &str) -> PathBuf {
 
 fn write_file(path: &Path, content: &str) {
     std::fs::write(path, content).expect("failed to write test file");
+}
+
+fn with_current_dir<R>(dir: &Path, f: impl FnOnce() -> R) -> R {
+    let _lock = cwd_lock().lock().expect("cwd lock should not be poisoned");
+    let _guard = CurrentDirGuard::enter(dir);
+    f()
+}
+
+fn cwd_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct CurrentDirGuard {
+    original: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn enter(dir: &Path) -> Self {
+        let original = std::env::current_dir().expect("failed to read current dir");
+        std::env::set_current_dir(dir).expect("failed to set current dir");
+        Self { original }
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.original).expect("failed to restore current dir");
+    }
 }
