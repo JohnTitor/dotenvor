@@ -22,7 +22,7 @@ dotenvor = "0.1"
 
 ## MSRV
 
-The minimum supported Rust version (MSRV) is **Rust 1.85.0+**.
+The minimum supported Rust version (MSRV) is **Rust 1.88.0+**.
 We don't treat MSRV changes as breaking, it may be changed in any release.
 
 ## Quick Start
