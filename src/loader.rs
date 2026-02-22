@@ -68,6 +68,7 @@ pub unsafe fn from_filename(name: &str) -> Result<LoadReport, Error> {
 pub struct EnvLoader {
     paths: Vec<PathBuf>,
     encoding: Encoding,
+    required: bool,
     override_existing: bool,
     key_parsing_mode: KeyParsingMode,
     search_upward: bool,
@@ -102,6 +103,14 @@ impl EnvLoader {
 
     pub fn encoding(mut self, encoding: Encoding) -> Self {
         self.encoding = encoding;
+        self
+    }
+
+    /// Set whether missing files should return an error.
+    ///
+    /// Defaults to `true`. When set to `false`, missing files are skipped.
+    pub fn required(mut self, required: bool) -> Self {
+        self.required = required;
         self
     }
 
@@ -194,16 +203,10 @@ impl EnvLoader {
         let paths = self.effective_paths()?;
         if paths.len() == 1 {
             let path = &paths[0];
-            self.log(&format!("reading {}", path.display()));
-            let bytes = std::fs::read(path)?;
-            let content = decode(&bytes, self.encoding)?;
-            let parsed = parse_str_with_source(
-                content,
-                include_source.then_some(path.as_path()),
-                self.key_parsing_mode,
-            )
-            .map_err(Error::from)?;
-            return Ok((parsed, 1));
+            if let Some(parsed) = self.read_entries(path, include_source)? {
+                return Ok((parsed, 1));
+            }
+            return Ok((Vec::new(), 0));
         }
 
         let mut merged_entries = Vec::new();
@@ -211,16 +214,10 @@ impl EnvLoader {
         let mut files_read = 0usize;
 
         for path in paths {
-            self.log(&format!("reading {}", path.display()));
-            let bytes = std::fs::read(&path)?;
+            let Some(parsed) = self.read_entries(&path, include_source)? else {
+                continue;
+            };
             files_read += 1;
-            let content = decode(&bytes, self.encoding)?;
-            let parsed = parse_str_with_source(
-                content,
-                include_source.then_some(path.as_path()),
-                self.key_parsing_mode,
-            )
-            .map_err(Error::from)?;
             merged_entries.reserve(parsed.len());
             by_key.reserve(parsed.len());
 
@@ -235,6 +232,26 @@ impl EnvLoader {
         }
 
         Ok((merged_entries, files_read))
+    }
+
+    fn read_entries(&self, path: &Path, include_source: bool) -> Result<Option<Vec<Entry>>, Error> {
+        self.log(&format!("reading {}", path.display()));
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && !self.required => {
+                self.log(&format!("skipping missing {}", path.display()));
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
+        let content = decode(&bytes, self.encoding)?;
+        let parsed = parse_str_with_source(
+            content,
+            include_source.then_some(path),
+            self.key_parsing_mode,
+        )
+        .map_err(Error::from)?;
+        Ok(Some(parsed))
     }
 
     fn apply_substitution(&self, entries: &mut [Entry]) {
@@ -284,6 +301,7 @@ impl Default for EnvLoader {
         Self {
             paths: Vec::new(),
             encoding: Encoding::Utf8,
+            required: true,
             override_existing: false,
             key_parsing_mode: KeyParsingMode::Strict,
             search_upward: false,
@@ -521,6 +539,7 @@ mod tests {
     fn logging_disabled_by_default() {
         let loader = EnvLoader::new();
         assert!(!loader.logging_enabled());
+        assert!(loader.required);
         assert!(!loader.search_upward);
         assert!(loader.target_env().as_memory().is_some());
     }
@@ -541,6 +560,12 @@ mod tests {
     fn search_upward_builder_sets_flag() {
         let loader = EnvLoader::new().search_upward(true);
         assert!(loader.search_upward);
+    }
+
+    #[test]
+    fn required_builder_sets_flag() {
+        let loader = EnvLoader::new().required(false);
+        assert!(!loader.required);
     }
 
     #[test]

@@ -51,6 +51,7 @@ use dotenvor::{EnvLoader, KeyParsingMode, SubstitutionMode, TargetEnv};
 let mut loader = EnvLoader::new()
     .path(".env")
     .search_upward(true)
+    .required(false) // skip missing files instead of returning Error::Io
     .key_parsing_mode(KeyParsingMode::Strict)
     .substitution_mode(SubstitutionMode::Expand)
     .override_existing(false)
@@ -114,6 +115,9 @@ assert_eq!(entries.len(), 2);
 - Upward file search support
   - `dotenv()` / `from_filename(...)`: upward search enabled
   - `EnvLoader`: upward search disabled by default (enable with `.search_upward(true)`)
+- Missing-file mode
+  - `required(true)` (default): missing files return `Error::Io`
+  - `required(false)`: missing files are skipped silently
 
 ### Substitution
 

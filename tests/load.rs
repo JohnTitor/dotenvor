@@ -92,6 +92,46 @@ fn missing_file_returns_io_error() {
 }
 
 #[test]
+fn missing_file_is_skipped_when_not_required() {
+    let dir = make_temp_dir("missing-optional");
+    let missing = dir.join("missing.env");
+
+    let mut loader = EnvLoader::new()
+        .path(missing)
+        .required(false)
+        .target(TargetEnv::memory());
+    let report = loader.load().expect("missing file should be skipped");
+
+    assert_eq!(report.files_read, 0);
+    assert_eq!(report.loaded, 0);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert!(map.is_empty(), "target should remain empty");
+}
+
+#[test]
+fn optional_mode_skips_missing_files_in_multi_file_load() {
+    let dir = make_temp_dir("missing-optional-multi");
+    let missing = dir.join("missing.env");
+    let existing = dir.join("existing.env");
+    write_file(&existing, "A=from_file\n");
+
+    let mut loader = EnvLoader::new()
+        .paths([missing, existing])
+        .required(false)
+        .target(TargetEnv::memory());
+    let report = loader.load().expect("load should succeed");
+
+    assert_eq!(report.files_read, 1);
+    assert_eq!(report.loaded, 1);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("A").expect("A should exist"), "from_file");
+}
+
+#[test]
 fn malformed_file_returns_parse_error() {
     let dir = make_temp_dir("malformed");
     let file = dir.join(".env");
@@ -425,6 +465,28 @@ fn search_upward_false_does_not_walk_parents() {
         Error::Io(_) => {}
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn search_upward_false_can_skip_missing_default_file_when_not_required() {
+    let dir = make_temp_dir("search-upward-false-optional");
+    let parent = dir.join("parent");
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).expect("failed to create child dir");
+    write_file(&parent.join(".env"), "A=upward\n");
+
+    let (report, target) = with_current_dir(&child, || {
+        let mut loader = EnvLoader::new().required(false).target(TargetEnv::memory());
+        let report = loader.load().expect("missing file should be skipped");
+        let target = loader.into_target();
+        (report, target)
+    });
+
+    assert_eq!(report.files_read, 0);
+    assert_eq!(report.loaded, 0);
+    assert_eq!(report.skipped_existing, 0);
+    let map = target.as_memory().expect("memory target");
+    assert!(map.is_empty(), "target should remain empty");
 }
 
 fn make_temp_dir(name: &str) -> PathBuf {
