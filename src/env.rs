@@ -36,6 +36,15 @@ impl TargetEnv {
         }
     }
 
+    pub(crate) fn get_var(&self, key: &str) -> Option<String> {
+        match self {
+            Self::Process => {
+                std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+            }
+            Self::Memory(map) => map.get(key).cloned(),
+        }
+    }
+
     pub(crate) fn set_var(&mut self, key: &str, value: &str) {
         match self {
             Self::Process => unsafe { std::env::set_var(key, value) },

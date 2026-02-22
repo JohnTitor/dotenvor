@@ -24,3 +24,13 @@ pub enum Encoding {
     #[default]
     Utf8,
 }
+
+/// Variable expansion behavior for loader values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubstitutionMode {
+    /// Keep values as parsed with no expansion.
+    #[default]
+    Disabled,
+    /// Expand `$VAR` and `${VAR}` placeholders.
+    Expand,
+}

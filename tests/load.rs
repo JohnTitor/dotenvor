@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dotenvor::{EnvLoader, Error, ParseErrorKind, TargetEnv};
+use dotenvor::{EnvLoader, Error, ParseErrorKind, SubstitutionMode, TargetEnv};
 
 #[test]
 fn override_existing_false_skips_existing_values() {
@@ -103,6 +103,91 @@ fn malformed_file_returns_parse_error() {
         Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidSyntax),
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn substitution_expands_chained_and_forward_references() {
+    let dir = make_temp_dir("substitution-forward");
+    let file = dir.join(".env");
+    write_file(&file, "A=$B\nB=${C}\nC=value\n");
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.loaded, 3);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("A").expect("A should exist"), "value");
+    assert_eq!(map.get("B").expect("B should exist"), "value");
+    assert_eq!(map.get("C").expect("C should exist"), "value");
+}
+
+#[test]
+fn substitution_uses_target_environment_for_missing_values() {
+    let dir = make_temp_dir("substitution-target-fallback");
+    let file = dir.join(".env");
+    write_file(&file, "OUT=${BASE}/bin\n");
+
+    let mut initial = BTreeMap::new();
+    initial.insert("BASE".to_string(), "/opt/app".to_string());
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::Memory(initial))
+        .substitution_mode(SubstitutionMode::Expand);
+
+    loader.load().expect("load should succeed");
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("OUT").expect("OUT should exist"), "/opt/app/bin");
+}
+
+#[test]
+fn substitution_respects_override_existing_false() {
+    let dir = make_temp_dir("substitution-override");
+    let file = dir.join(".env");
+    write_file(&file, "A=file\nB=${A}\n");
+
+    let mut initial = BTreeMap::new();
+    initial.insert("A".to_string(), "existing".to_string());
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::Memory(initial))
+        .override_existing(false)
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.loaded, 1);
+    assert_eq!(report.skipped_existing, 1);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("A").expect("A should exist"), "existing");
+    assert_eq!(map.get("B").expect("B should exist"), "existing");
+}
+
+#[test]
+fn substitution_preserves_unknown_placeholders() {
+    let dir = make_temp_dir("substitution-unknown");
+    let file = dir.join(".env");
+    write_file(&file, "A=prefix-${MISSING}-$OTHER-suffix\n");
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .substitution_mode(SubstitutionMode::Expand);
+
+    loader.load().expect("load should succeed");
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(
+        map.get("A").expect("A should exist"),
+        "prefix-${MISSING}-$OTHER-suffix"
+    );
 }
 
 fn make_temp_dir(name: &str) -> PathBuf {
