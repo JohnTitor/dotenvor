@@ -479,6 +479,21 @@ mod tests {
     }
 
     #[test]
+    fn permissive_mode_allows_digit_prefixed_and_punctuation_keys() {
+        let input = "1KEY=value\n.KEY=dot\nVAR+ALT=plus\n";
+        let parsed =
+            parse_str_with_mode(input, KeyParsingMode::Permissive).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].key, "1KEY");
+        assert_eq!(parsed[0].value, "value");
+        assert_eq!(parsed[1].key, ".KEY");
+        assert_eq!(parsed[1].value, "dot");
+        assert_eq!(parsed[2].key, "VAR+ALT");
+        assert_eq!(parsed[2].value, "plus");
+    }
+
+    #[test]
     fn permissive_mode_does_not_treat_quotes_in_keys_as_value_quotes() {
         let input = "A\"B=1\nC=2\n";
         let parsed =
@@ -499,6 +514,24 @@ mod tests {
         match err {
             Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidKey),
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn permissive_mode_rejects_unicode_control_and_whitespace_in_keys() {
+        for input in [
+            "foö=1\n",
+            "Πoo=1\n",
+            "foo\x07=1\n",
+            "bar\0=1\n",
+            "baz zed=1\n",
+        ] {
+            let err = parse_str_with_mode(input, KeyParsingMode::Permissive)
+                .expect_err("expected parse error");
+            match err {
+                Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidKey),
+                other => panic!("unexpected error: {other:?}"),
+            }
         }
     }
 

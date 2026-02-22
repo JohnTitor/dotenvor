@@ -229,6 +229,162 @@ fn substitution_preserves_unknown_placeholders() {
 }
 
 #[test]
+fn substitution_expands_permissive_placeholders_with_punctuation_keys() {
+    let dir = make_temp_dir("substitution-permissive-punctuation");
+    let file = dir.join(".env");
+    write_file(
+        &file,
+        "KEY:ONE=one\n%TEMP%=/tmp\nOUT_COLON=${KEY:ONE}11\nOUT_PERCENT=${%TEMP%}/cache\n",
+    );
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .key_parsing_mode(KeyParsingMode::Permissive)
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.loaded, 4);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(
+        map.get("OUT_COLON").expect("OUT_COLON should exist"),
+        "one11"
+    );
+    assert_eq!(
+        map.get("OUT_PERCENT").expect("OUT_PERCENT should exist"),
+        "/tmp/cache"
+    );
+}
+
+#[test]
+fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
+    let dir = make_temp_dir("substitution-shell-modifiers-literal");
+    let file = dir.join(".env");
+    write_file(
+        &file,
+        "SET=from_file\n\
+         COLON_MINUS=${SET:-fallback}\n\
+         MINUS=${SET-fallback}\n\
+         COLON_PLUS=${SET:+alt}\n\
+         PLUS=${SET+alt}\n\
+         COLON_Q=${SET:?err}\n\
+         Q=${SET?err}\n\
+         MISSING_COLON_MINUS=${MISSING:-fallback}\n\
+         MISSING_MINUS=${MISSING-fallback}\n\
+         COMPOSITE=pre-${SET:-fallback}-post\n",
+    );
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .substitution_mode(SubstitutionMode::Expand);
+
+    loader.load().expect("load should succeed");
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("SET").expect("SET should exist"), "from_file");
+    assert_eq!(
+        map.get("COLON_MINUS").expect("COLON_MINUS should exist"),
+        "${SET:-fallback}"
+    );
+    assert_eq!(
+        map.get("MINUS").expect("MINUS should exist"),
+        "${SET-fallback}"
+    );
+    assert_eq!(
+        map.get("COLON_PLUS").expect("COLON_PLUS should exist"),
+        "${SET:+alt}"
+    );
+    assert_eq!(map.get("PLUS").expect("PLUS should exist"), "${SET+alt}");
+    assert_eq!(
+        map.get("COLON_Q").expect("COLON_Q should exist"),
+        "${SET:?err}"
+    );
+    assert_eq!(map.get("Q").expect("Q should exist"), "${SET?err}");
+    assert_eq!(
+        map.get("MISSING_COLON_MINUS")
+            .expect("MISSING_COLON_MINUS should exist"),
+        "${MISSING:-fallback}"
+    );
+    assert_eq!(
+        map.get("MISSING_MINUS")
+            .expect("MISSING_MINUS should exist"),
+        "${MISSING-fallback}"
+    );
+    assert_eq!(
+        map.get("COMPOSITE").expect("COMPOSITE should exist"),
+        "pre-${SET:-fallback}-post"
+    );
+}
+
+#[test]
+fn substitution_resolves_modifier_shaped_keys_in_permissive_mode() {
+    let dir = make_temp_dir("substitution-modifier-shaped-keys");
+    let file = dir.join(".env");
+    write_file(
+        &file,
+        "VAR:-default=colon_minus\n\
+         VAR-default=minus\n\
+         VAR:+alt=colon_plus\n\
+         VAR+alt=plus\n\
+         VAR:?err=colon_question\n\
+         VAR?err=question\n\
+         OUT1=${VAR:-default}\n\
+         OUT2=${VAR-default}\n\
+         OUT3=${VAR:+alt}\n\
+         OUT4=${VAR+alt}\n\
+         OUT5=${VAR:?err}\n\
+         OUT6=${VAR?err}\n",
+    );
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .key_parsing_mode(KeyParsingMode::Permissive)
+        .substitution_mode(SubstitutionMode::Expand);
+
+    loader.load().expect("load should succeed");
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("OUT1").expect("OUT1 should exist"), "colon_minus");
+    assert_eq!(map.get("OUT2").expect("OUT2 should exist"), "minus");
+    assert_eq!(map.get("OUT3").expect("OUT3 should exist"), "colon_plus");
+    assert_eq!(map.get("OUT4").expect("OUT4 should exist"), "plus");
+    assert_eq!(
+        map.get("OUT5").expect("OUT5 should exist"),
+        "colon_question"
+    );
+    assert_eq!(map.get("OUT6").expect("OUT6 should exist"), "question");
+}
+
+#[test]
+fn substitution_expands_placeholders_from_single_and_double_quoted_values() {
+    let dir = make_temp_dir("substitution-quotes");
+    let file = dir.join(".env");
+    write_file(
+        &file,
+        "BASE=from_file\nSINGLE='${BASE}'\nDOUBLE=\"${BASE}\"\nUNQUOTED=${BASE}\n",
+    );
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .substitution_mode(SubstitutionMode::Expand);
+
+    loader.load().expect("load should succeed");
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("SINGLE").expect("SINGLE should exist"), "from_file");
+    assert_eq!(map.get("DOUBLE").expect("DOUBLE should exist"), "from_file");
+    assert_eq!(
+        map.get("UNQUOTED").expect("UNQUOTED should exist"),
+        "from_file"
+    );
+}
+
+#[test]
 fn search_upward_true_finds_parent_file() {
     let dir = make_temp_dir("search-upward-true");
     let parent = dir.join("parent");
