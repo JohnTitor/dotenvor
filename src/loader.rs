@@ -101,6 +101,22 @@ impl EnvLoader {
         self
     }
 
+    /// Append paths using the common multi-environment dotenv convention.
+    ///
+    /// Precedence (highest to lowest):
+    ///
+    /// - `.env.{environment}.local`
+    /// - `.env.local`
+    /// - `.env.{environment}`
+    /// - `.env`
+    ///
+    /// `dotenvor` merges files using "last file wins", so these paths are
+    /// appended in reverse precedence order.
+    pub fn convention(mut self, environment: impl AsRef<str>) -> Self {
+        self.paths.extend(convention_paths(environment.as_ref()));
+        self
+    }
+
     pub fn encoding(mut self, encoding: Encoding) -> Self {
         self.encoding = encoding;
         self
@@ -317,6 +333,31 @@ impl Default for EnvLoader {
 fn decode(bytes: &[u8], encoding: Encoding) -> Result<&str, Error> {
     match encoding {
         Encoding::Utf8 => Ok(std::str::from_utf8(bytes)?),
+    }
+}
+
+fn convention_paths(environment: &str) -> Vec<PathBuf> {
+    let environment = environment.trim();
+    let mut paths = Vec::with_capacity(4);
+
+    push_unique_path(&mut paths, PathBuf::from(".env"));
+    if !environment.is_empty() {
+        push_unique_path(&mut paths, PathBuf::from(format!(".env.{environment}")));
+    }
+    push_unique_path(&mut paths, PathBuf::from(".env.local"));
+    if !environment.is_empty() {
+        push_unique_path(
+            &mut paths,
+            PathBuf::from(format!(".env.{environment}.local")),
+        );
+    }
+
+    paths
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
     }
 }
 
@@ -594,7 +635,7 @@ fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
-    use super::{EnvLoader, resolve_upward_path};
+    use super::{EnvLoader, convention_paths, resolve_upward_path};
     use crate::model::KeyParsingMode;
     use std::path::Path;
     use std::path::PathBuf;
@@ -637,6 +678,41 @@ mod tests {
     fn key_parsing_mode_builder_sets_flag() {
         let loader = EnvLoader::new().key_parsing_mode(KeyParsingMode::Permissive);
         assert_eq!(loader.key_parsing_mode, KeyParsingMode::Permissive);
+    }
+
+    #[test]
+    fn convention_builder_sets_common_stack_paths() {
+        let loader = EnvLoader::new().convention("development");
+        assert_eq!(
+            loader.paths,
+            vec![
+                PathBuf::from(".env"),
+                PathBuf::from(".env.development"),
+                PathBuf::from(".env.local"),
+                PathBuf::from(".env.development.local"),
+            ]
+        );
+    }
+
+    #[test]
+    fn convention_builder_handles_blank_environment_name() {
+        let loader = EnvLoader::new().convention("   ");
+        assert_eq!(
+            loader.paths,
+            vec![PathBuf::from(".env"), PathBuf::from(".env.local")]
+        );
+    }
+
+    #[test]
+    fn convention_paths_avoid_duplicates() {
+        assert_eq!(
+            convention_paths("local"),
+            vec![
+                PathBuf::from(".env"),
+                PathBuf::from(".env.local"),
+                PathBuf::from(".env.local.local"),
+            ]
+        );
     }
 
     #[test]

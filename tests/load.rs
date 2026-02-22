@@ -78,6 +78,78 @@ fn multi_file_load_uses_last_file_precedence() {
 }
 
 #[test]
+fn convention_stack_uses_expected_precedence() {
+    let dir = make_temp_dir("convention-precedence");
+    write_file(&dir.join(".env"), "ORDER=env\nBASE_ONLY=1\n");
+    write_file(
+        &dir.join(".env.development"),
+        "ORDER=development\nDEVELOPMENT_ONLY=1\n",
+    );
+    write_file(&dir.join(".env.local"), "ORDER=local\nLOCAL_ONLY=1\n");
+    write_file(
+        &dir.join(".env.development.local"),
+        "ORDER=development_local\nDEVELOPMENT_LOCAL_ONLY=1\n",
+    );
+
+    let (report, target) = with_current_dir(&dir, || {
+        let mut loader = EnvLoader::new()
+            .convention("development")
+            .target(TargetEnv::memory());
+        let report = loader.load().expect("load should succeed");
+        let target = loader.into_target();
+        (report, target)
+    });
+
+    assert_eq!(report.files_read, 4);
+    assert_eq!(report.loaded, 5);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = target.as_memory().expect("memory target");
+    assert_eq!(
+        map.get("ORDER").expect("ORDER should exist"),
+        "development_local"
+    );
+    assert_eq!(map.get("BASE_ONLY").expect("BASE_ONLY should exist"), "1");
+    assert_eq!(
+        map.get("DEVELOPMENT_ONLY")
+            .expect("DEVELOPMENT_ONLY should exist"),
+        "1"
+    );
+    assert_eq!(map.get("LOCAL_ONLY").expect("LOCAL_ONLY should exist"), "1");
+    assert_eq!(
+        map.get("DEVELOPMENT_LOCAL_ONLY")
+            .expect("DEVELOPMENT_LOCAL_ONLY should exist"),
+        "1"
+    );
+}
+
+#[test]
+fn convention_stack_can_skip_missing_files() {
+    let dir = make_temp_dir("convention-missing");
+    write_file(&dir.join(".env"), "ORDER=env\n");
+    write_file(&dir.join(".env.local"), "ORDER=local\n");
+
+    let (report, target) = with_current_dir(&dir, || {
+        let mut loader = EnvLoader::new()
+            .convention("development")
+            .required(false)
+            .target(TargetEnv::memory());
+        let report = loader
+            .load()
+            .expect("missing convention files should be skipped");
+        let target = loader.into_target();
+        (report, target)
+    });
+
+    assert_eq!(report.files_read, 2);
+    assert_eq!(report.loaded, 1);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = target.as_memory().expect("memory target");
+    assert_eq!(map.get("ORDER").expect("ORDER should exist"), "local");
+}
+
+#[test]
 fn missing_file_returns_io_error() {
     let dir = make_temp_dir("missing");
     let missing = dir.join("missing.env");

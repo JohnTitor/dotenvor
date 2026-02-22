@@ -354,8 +354,7 @@ mod tests {
 
     #[test]
     fn parse_run_reports_missing_file_value() {
-        let err = parse_run_options(vec![OsString::from("-f")])
-            .expect_err("parse should fail");
+        let err = parse_run_options(vec![OsString::from("-f")]).expect_err("parse should fail");
         assert_eq!(err, "missing value for `-f/--file`");
     }
 

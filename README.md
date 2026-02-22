@@ -8,6 +8,7 @@ It focuses on predictable behavior, low dependency overhead, and an ergonomic AP
 
 - Fast parser for common `.env` syntax
 - Builder-style loader with multi-file precedence
+- Built-in multi-environment stack helper (`.convention("development")`)
 - Optional variable substitution (`$VAR`, `${VAR}`, `${VAR:-fallback}`)
 - Optional upward search for `.env` files
 - First-party `dotenv` CLI (`dotenv run ...`)
@@ -65,6 +66,27 @@ println!("files_read={}", report.files_read);
 println!("DATABASE_URL={:?}", env.get("DATABASE_URL"));
 # Ok::<(), dotenvor::Error>(())
 ```
+
+### Multi-environment stack convention
+
+```rust
+use dotenvor::{EnvLoader, TargetEnv};
+
+let mut loader = EnvLoader::new()
+    .convention("development")
+    .required(false)
+    .target(TargetEnv::memory());
+
+loader.load()?;
+# Ok::<(), dotenvor::Error>(())
+```
+
+Convention precedence (highest to lowest):
+
+- `.env.development.local`
+- `.env.local`
+- `.env.development`
+- `.env`
 
 ### Parse only
 
@@ -126,6 +148,7 @@ assert_eq!(entries.len(), 2);
 ### Loading
 
 - Multi-file loading with deterministic precedence
+- Convention helper for environment stacks (`.convention("development")`)
 - `override_existing(false)` by default
 - `EnvLoader` defaults to `TargetEnv::memory()` for process-isolated loads
 - Process-env loading is available via `unsafe { TargetEnv::process() }` and
