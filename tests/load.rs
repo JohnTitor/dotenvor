@@ -408,12 +408,18 @@ fn substitution_resolves_modifier_shaped_keys_in_permissive_mode() {
 }
 
 #[test]
-fn substitution_expands_placeholders_from_single_and_double_quoted_values() {
+fn substitution_respects_literal_dollar_in_single_quotes_and_backslash_escapes() {
     let dir = make_temp_dir("substitution-quotes");
     let file = dir.join(".env");
     write_file(
         &file,
-        "BASE=from_file\nSINGLE='${BASE}'\nDOUBLE=\"${BASE}\"\nUNQUOTED=${BASE}\n",
+        "BASE=from_file\n\
+         SINGLE='${BASE}'\n\
+         DOUBLE=\"${BASE}\"\n\
+         UNQUOTED=${BASE}\n\
+         ESCAPED_UNQUOTED=\\${BASE}\n\
+         ESCAPED_DOUBLE=\"\\${BASE}\"\n\
+         ESCAPED_SIMPLE=\\$BASE\n",
     );
 
     let mut loader = EnvLoader::new()
@@ -424,11 +430,26 @@ fn substitution_expands_placeholders_from_single_and_double_quoted_values() {
     loader.load().expect("load should succeed");
 
     let map = loader.target_env().as_memory().expect("memory target");
-    assert_eq!(map.get("SINGLE").expect("SINGLE should exist"), "from_file");
+    assert_eq!(map.get("SINGLE").expect("SINGLE should exist"), "${BASE}");
     assert_eq!(map.get("DOUBLE").expect("DOUBLE should exist"), "from_file");
     assert_eq!(
         map.get("UNQUOTED").expect("UNQUOTED should exist"),
         "from_file"
+    );
+    assert_eq!(
+        map.get("ESCAPED_UNQUOTED")
+            .expect("ESCAPED_UNQUOTED should exist"),
+        "${BASE}"
+    );
+    assert_eq!(
+        map.get("ESCAPED_DOUBLE")
+            .expect("ESCAPED_DOUBLE should exist"),
+        "${BASE}"
+    );
+    assert_eq!(
+        map.get("ESCAPED_SIMPLE")
+            .expect("ESCAPED_SIMPLE should exist"),
+        "$BASE"
     );
 }
 

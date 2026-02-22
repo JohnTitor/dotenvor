@@ -125,6 +125,7 @@ assert_eq!(entries.len(), 2);
 - Expands `$VAR`, `${VAR}`, and `${VAR:-fallback}` (strict key mode)
 - Supports chained and forward references
 - Falls back to current target environment values when needed
+- Treats single-quoted values and escaped dollars (`\$`) as literal in expand mode
 
 ### Logging
 

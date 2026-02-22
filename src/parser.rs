@@ -16,7 +16,7 @@ pub fn parse_str_with_mode(
     input: &str,
     key_parsing_mode: KeyParsingMode,
 ) -> Result<Vec<Entry>, Error> {
-    parse_str_with_source(input, None, key_parsing_mode).map_err(Error::from)
+    parse_str_with_source(input, None, key_parsing_mode, false).map_err(Error::from)
 }
 
 /// Parse dotenv entries from UTF-8 bytes.
@@ -52,6 +52,7 @@ pub(crate) fn parse_str_with_source(
     input: &str,
     source: Option<&Path>,
     key_parsing_mode: KeyParsingMode,
+    preserve_literal_dollar_escapes: bool,
 ) -> Result<Vec<Entry>, ParseError> {
     let normalized = normalize_newlines(input);
     let input = normalized.as_ref();
@@ -92,7 +93,13 @@ pub(crate) fn parse_str_with_source(
         }
 
         let statement = &input[statement_start..idx];
-        let parsed = parse_line(statement, statement_line, source, key_parsing_mode)?;
+        let parsed = parse_line(
+            statement,
+            statement_line,
+            source,
+            key_parsing_mode,
+            preserve_literal_dollar_escapes,
+        )?;
         let Some(entry) = parsed else {
             if idx < bytes.len() && bytes[idx] == b'\n' {
                 idx += 1;
@@ -160,6 +167,7 @@ fn parse_line(
     line_num: u32,
     source: Option<&Path>,
     key_parsing_mode: KeyParsingMode,
+    preserve_literal_dollar_escapes: bool,
 ) -> Result<Option<Entry>, ParseError> {
     let mut working = line.trim_start();
     if working.is_empty() || working.starts_with('#') {
@@ -199,7 +207,12 @@ fn parse_line(
 
     let value_input = working[eq_idx + 1..].trim_start();
     let value_column = (line.len() - value_input.len()) as u32 + 1;
-    let value = parse_value(value_input, line_num, value_column)?;
+    let value = parse_value(
+        value_input,
+        line_num,
+        value_column,
+        preserve_literal_dollar_escapes,
+    )?;
 
     Ok(Some(Entry {
         key: key.to_owned(),
@@ -209,16 +222,21 @@ fn parse_line(
     }))
 }
 
-fn parse_value(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
+fn parse_value(
+    input: &str,
+    line_num: u32,
+    column: u32,
+    preserve_literal_dollar_escapes: bool,
+) -> Result<String, ParseError> {
     if input.is_empty() {
         return Ok(String::new());
     }
 
     if input.starts_with('\'') {
-        return parse_single_quoted(input, line_num, column);
+        return parse_single_quoted(input, line_num, column, preserve_literal_dollar_escapes);
     }
     if input.starts_with('"') {
-        return parse_double_quoted(input, line_num, column);
+        return parse_double_quoted(input, line_num, column, preserve_literal_dollar_escapes);
     }
     if input.starts_with('`') {
         return parse_backtick_quoted(input, line_num, column);
@@ -232,8 +250,17 @@ fn parse_value(input: &str, line_num: u32, column: u32) -> Result<String, ParseE
     Ok(value.to_owned())
 }
 
-fn parse_single_quoted(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
-    parse_literal_quoted(input, '\'', line_num, column)
+fn parse_single_quoted(
+    input: &str,
+    line_num: u32,
+    column: u32,
+    preserve_literal_dollar_escapes: bool,
+) -> Result<String, ParseError> {
+    let parsed = parse_literal_quoted(input, '\'', line_num, column)?;
+    if !preserve_literal_dollar_escapes {
+        return Ok(parsed);
+    }
+    Ok(escape_dollar_signs(&parsed))
 }
 
 fn parse_backtick_quoted(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
@@ -277,7 +304,12 @@ fn parse_literal_quoted(
     Ok(input[1..end_idx].to_owned())
 }
 
-fn parse_double_quoted(input: &str, line_num: u32, column: u32) -> Result<String, ParseError> {
+fn parse_double_quoted(
+    input: &str,
+    line_num: u32,
+    column: u32,
+    preserve_literal_dollar_escapes: bool,
+) -> Result<String, ParseError> {
     let mut out = String::with_capacity(input.len().saturating_sub(2));
     let mut escaped = false;
     let mut closing_idx = None;
@@ -290,6 +322,10 @@ fn parse_double_quoted(input: &str, line_num: u32, column: u32) -> Result<String
                 't' => '\t',
                 '\\' => '\\',
                 '"' => '"',
+                '$' if preserve_literal_dollar_escapes => {
+                    out.push('\\');
+                    '$'
+                }
                 _ => ch,
             };
             out.push(unescaped);
@@ -325,6 +361,23 @@ fn parse_double_quoted(input: &str, line_num: u32, column: u32) -> Result<String
     }
 
     Ok(out)
+}
+
+fn escape_dollar_signs(value: &str) -> String {
+    if !value.contains('$') {
+        return value.to_owned();
+    }
+
+    let mut out =
+        String::with_capacity(value.len() + value.bytes().filter(|byte| *byte == b'$').count());
+    for ch in value.chars() {
+        if ch == '$' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+
+    out
 }
 
 fn is_valid_key(key: &str, key_parsing_mode: KeyParsingMode) -> bool {

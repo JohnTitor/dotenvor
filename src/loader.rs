@@ -249,6 +249,7 @@ impl EnvLoader {
             content,
             include_source.then_some(path),
             self.key_parsing_mode,
+            self.substitution_mode == SubstitutionMode::Expand,
         )
         .map_err(Error::from)?;
         Ok(Some(parsed))
@@ -444,6 +445,14 @@ where
 
     while idx < bytes.len() {
         if bytes[idx] != b'$' {
+            idx += 1;
+            continue;
+        }
+
+        if idx > 0 && bytes[idx - 1] == b'\\' {
+            out.push_str(&input[cursor..idx - 1]);
+            out.push('$');
+            cursor = idx + 1;
             idx += 1;
             continue;
         }
