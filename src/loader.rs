@@ -39,7 +39,8 @@ pub struct EnvLoader {
     encoding: Encoding,
     override_existing: bool,
     substitution_mode: SubstitutionMode,
-    debug: bool,
+    verbose: bool,
+    quiet: bool,
     target: TargetEnv,
 }
 
@@ -78,8 +79,13 @@ impl EnvLoader {
         self
     }
 
-    pub fn debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
+    pub fn verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
+    }
+
+    pub fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
         self
     }
 
@@ -103,6 +109,11 @@ impl EnvLoader {
     pub fn parse_only(&self) -> Result<Vec<Entry>, Error> {
         let (mut entries, _) = self.collect_entries()?;
         self.apply_substitution(&mut entries);
+        self.log(&format!(
+            "parsed {} entr{}",
+            entries.len(),
+            plural(entries.len(), "y", "ies")
+        ));
         Ok(entries)
     }
 
@@ -117,16 +128,19 @@ impl EnvLoader {
         for entry in entries {
             if !self.override_existing && self.target.contains_key(&entry.key) {
                 report.skipped_existing += 1;
-                if self.debug {
-                    eprintln!("dotenvor: skipping existing key {}", entry.key);
-                }
+                self.log(&format!("skipping existing key {}", entry.key));
                 continue;
             }
 
+            self.log(&format!("setting key {}", entry.key));
             self.target.set_var(&entry.key, &entry.value);
             report.loaded += 1;
         }
 
+        self.log(&format!(
+            "load complete: files_read={}, loaded={}, skipped_existing={}",
+            report.files_read, report.loaded, report.skipped_existing
+        ));
         Ok(report)
     }
 
@@ -136,6 +150,7 @@ impl EnvLoader {
         let mut files_read = 0usize;
 
         for path in self.effective_paths() {
+            self.log(&format!("reading {}", path.display()));
             let bytes = std::fs::read(&path)?;
             files_read += 1;
             let content = decode(&bytes, self.encoding)?;
@@ -172,6 +187,16 @@ impl EnvLoader {
             self.paths.clone()
         }
     }
+
+    fn logging_enabled(&self) -> bool {
+        self.verbose && !self.quiet
+    }
+
+    fn log(&self, message: &str) {
+        if self.logging_enabled() {
+            eprintln!("dotenvor: {message}");
+        }
+    }
 }
 
 impl Default for EnvLoader {
@@ -181,7 +206,8 @@ impl Default for EnvLoader {
             encoding: Encoding::Utf8,
             override_existing: false,
             substitution_mode: SubstitutionMode::Disabled,
-            debug: false,
+            verbose: false,
+            quiet: false,
             target: TargetEnv::Process,
         }
     }
@@ -344,4 +370,31 @@ fn is_unbraced_var_start(byte: u8) -> bool {
 
 fn is_unbraced_var_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EnvLoader;
+
+    #[test]
+    fn logging_disabled_by_default() {
+        let loader = EnvLoader::new();
+        assert!(!loader.logging_enabled());
+    }
+
+    #[test]
+    fn verbose_enables_logging() {
+        let loader = EnvLoader::new().verbose(true);
+        assert!(loader.logging_enabled());
+    }
+
+    #[test]
+    fn quiet_overrides_verbose() {
+        let loader = EnvLoader::new().verbose(true).quiet(true);
+        assert!(!loader.logging_enabled());
+    }
 }
