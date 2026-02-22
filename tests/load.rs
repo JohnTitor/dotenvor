@@ -16,7 +16,7 @@ fn override_existing_false_skips_existing_values() {
 
     let mut loader = EnvLoader::new()
         .path(&file)
-        .target(TargetEnv::Memory(initial))
+        .target(TargetEnv::from_memory(initial))
         .override_existing(false);
 
     let report = loader.load().expect("load should succeed");
@@ -41,7 +41,7 @@ fn override_existing_true_replaces_values() {
 
     let mut loader = EnvLoader::new()
         .path(&file)
-        .target(TargetEnv::Memory(initial))
+        .target(TargetEnv::from_memory(initial))
         .override_existing(true);
 
     let report = loader.load().expect("load should succeed");
@@ -175,7 +175,7 @@ fn substitution_uses_target_environment_for_missing_values() {
 
     let mut loader = EnvLoader::new()
         .path(file)
-        .target(TargetEnv::Memory(initial))
+        .target(TargetEnv::from_memory(initial))
         .substitution_mode(SubstitutionMode::Expand);
 
     loader.load().expect("load should succeed");
@@ -195,7 +195,7 @@ fn substitution_respects_override_existing_false() {
 
     let mut loader = EnvLoader::new()
         .path(file)
-        .target(TargetEnv::Memory(initial))
+        .target(TargetEnv::from_memory(initial))
         .override_existing(false)
         .substitution_mode(SubstitutionMode::Expand);
 

@@ -2,21 +2,20 @@ use std::collections::BTreeMap;
 
 /// Destination for loaded environment variables.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TargetEnv {
+pub struct TargetEnv {
+    kind: TargetEnvKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TargetEnvKind {
     /// Apply entries to the current process environment.
-    ///
-    /// Construct this target with [`TargetEnv::process`].
     ///
     /// This writes through [`std::env::set_var`], which mutates global process
     /// state and is not thread-safe for concurrent environment access.
-    Process(ProcessTarget),
+    Process,
     /// Apply entries to an in-memory map.
     Memory(BTreeMap<String, String>),
 }
-
-#[doc(hidden)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProcessTarget(());
 
 impl Default for TargetEnv {
     fn default() -> Self {
@@ -33,50 +32,59 @@ impl TargetEnv {
     /// process environment for the duration of operations that may mutate this
     /// target.
     pub unsafe fn process() -> Self {
-        Self::Process(ProcessTarget(()))
+        Self {
+            kind: TargetEnvKind::Process,
+        }
     }
 
     /// Create an in-memory environment target.
     ///
     /// Use this to avoid mutating the process environment.
     pub fn memory() -> Self {
-        Self::Memory(BTreeMap::new())
+        Self::from_memory(BTreeMap::new())
+    }
+
+    /// Create an in-memory environment target from an existing map.
+    pub fn from_memory(map: BTreeMap<String, String>) -> Self {
+        Self {
+            kind: TargetEnvKind::Memory(map),
+        }
     }
 
     pub fn as_memory(&self) -> Option<&BTreeMap<String, String>> {
-        match self {
-            Self::Memory(map) => Some(map),
-            Self::Process(_) => None,
+        match &self.kind {
+            TargetEnvKind::Memory(map) => Some(map),
+            TargetEnvKind::Process => None,
         }
     }
 
     pub fn as_memory_mut(&mut self) -> Option<&mut BTreeMap<String, String>> {
-        match self {
-            Self::Memory(map) => Some(map),
-            Self::Process(_) => None,
+        match &mut self.kind {
+            TargetEnvKind::Memory(map) => Some(map),
+            TargetEnvKind::Process => None,
         }
     }
 
     pub(crate) fn contains_key(&self, key: &str) -> bool {
-        match self {
-            Self::Process(_) => std::env::var_os(key).is_some(),
-            Self::Memory(map) => map.contains_key(key),
+        match &self.kind {
+            TargetEnvKind::Process => std::env::var_os(key).is_some(),
+            TargetEnvKind::Memory(map) => map.contains_key(key),
         }
     }
 
     pub(crate) fn get_var(&self, key: &str) -> Option<String> {
-        match self {
-            Self::Process(_) => {
+        match &self.kind {
+            TargetEnvKind::Process => {
                 std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
             }
-            Self::Memory(map) => map.get(key).cloned(),
+            TargetEnvKind::Memory(map) => map.get(key).cloned(),
         }
     }
 
     pub(crate) fn set_var(&mut self, key: &str, value: &str) {
-        match self {
-            Self::Process(_) => unsafe { std::env::set_var(key, value) },
-            Self::Memory(map) => {
+        match &mut self.kind {
+            TargetEnvKind::Process => unsafe { std::env::set_var(key, value) },
+            TargetEnvKind::Memory(map) => {
                 map.insert(key.to_owned(), value.to_owned());
             }
         }
