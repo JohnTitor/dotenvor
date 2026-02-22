@@ -20,6 +20,11 @@ It focuses on predictable behavior, low dependency overhead, and an ergonomic AP
 dotenvor = "0.1"
 ```
 
+## MSRV
+
+The minimum supported Rust version (MSRV) is **Rust 1.85.0+**.
+We don't treat MSRV changes as breaking, it may be changed in any release.
+
 ## Quick Start
 
 ### Load into the process environment

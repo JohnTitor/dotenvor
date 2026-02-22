@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # MSRV and nightly
+        version: [1.85.0, stable, nightly]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set toolchain
+        run: |
+          rustup set profile minimal
+          rustup override set ${{ matrix.version }}
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Rustfmt check
+        if: matrix.version == '1.85.0'
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all -- --check
+
+      - name: Run `cargo test` on workspace
+        if: matrix.version != '1.85.0'
+        run: cargo test --workspace
+
+      - name: all features check
+        run: cargo check --workspace --all-features
+
+      - name: deny check
+        if: matrix.version == 'stable'
+        uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
