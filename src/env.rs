@@ -4,6 +4,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TargetEnv {
     /// Apply entries to the current process environment.
+    ///
+    /// This writes through [`std::env::set_var`], which mutates global process
+    /// state and is not thread-safe for concurrent environment access. Prefer
+    /// [`TargetEnv::memory`] unless you control synchronization.
     #[default]
     Process,
     /// Apply entries to an in-memory map.
@@ -11,6 +15,9 @@ pub enum TargetEnv {
 }
 
 impl TargetEnv {
+    /// Create an in-memory environment target.
+    ///
+    /// Use this to avoid mutating the process environment.
     pub fn memory() -> Self {
         Self::Memory(BTreeMap::new())
     }

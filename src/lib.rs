@@ -1,3 +1,10 @@
+//! Parse and load `.env` files.
+//!
+//! Convenience loaders (`dotenv`, `from_path`, `from_paths`, `from_filename`)
+//! and [`EnvLoader::new`] default to [`TargetEnv::Process`], which mutates the
+//! process environment via [`std::env::set_var`]. This is not thread-safe for
+//! concurrent environment access, so prefer [`TargetEnv::memory`].
+
 mod env;
 mod error;
 mod loader;
