@@ -10,6 +10,7 @@ It focuses on predictable behavior, low dependency overhead, and an ergonomic AP
 - Builder-style loader with multi-file precedence
 - Optional variable substitution (`$VAR`, `${VAR}`, `${VAR:-fallback}`)
 - Optional upward search for `.env` files
+- First-party `dotenv` CLI (`dotenv run ...`)
 - Process-env or in-memory targets for safer tests
 - Quiet/verbose logging controls
 
@@ -75,6 +76,24 @@ assert_eq!(entries.len(), 2);
 # Ok::<(), dotenvor::Error>(())
 ```
 
+### CLI: run a command with dotenv files
+
+```bash
+cargo run --bin dotenv -- run -- printenv DATABASE_URL
+```
+
+Select files explicitly (repeat `-f` or use comma-separated paths):
+
+```bash
+cargo run --bin dotenv -- run -f ".env.local,.env" -- my-app
+```
+
+Useful flags:
+
+- `-o`, `--override`: let file values override existing environment variables
+- `-i`, `--ignore`: skip missing files
+- `-u`, `--search-upward`: resolve relative files by walking parent directories
+
 ### Opt in to permissive key parsing
 
 ```rust
@@ -118,6 +137,10 @@ assert_eq!(entries.len(), 2);
 - Missing-file mode
   - `required(true)` (default): missing files return `Error::Io`
   - `required(false)`: missing files are skipped silently
+- CLI command execution (`dotenv run`)
+  - Defaults to `.env` when no file is selected
+  - Accepts `-f/--file` for file selection (repeatable and comma-separated)
+  - Supports `-o/--override` and `-i/--ignore`
 
 ### Substitution
 

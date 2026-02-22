@@ -16,6 +16,10 @@ description = "Small, fast `.env` parser and loader for Rust"
 [dev-dependencies]
 criterion = "0.6"
 
+[[bin]]
+name = "dotenv"
+path = "src/bin/dotenv.rs"
+
 [[bench]]
 name = "parse"
 harness = false
