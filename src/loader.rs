@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -117,6 +118,10 @@ impl EnvLoader {
         self
     }
 
+    /// Set input file decoding.
+    ///
+    /// Defaults to [`Encoding::Utf8`]. Use [`Encoding::Latin1`] for
+    /// ISO-8859-1-compatible dotenv files.
     pub fn encoding(mut self, encoding: Encoding) -> Self {
         self.encoding = encoding;
         self
@@ -262,7 +267,7 @@ impl EnvLoader {
         };
         let content = decode(&bytes, self.encoding)?;
         let parsed = parse_str_with_source(
-            content,
+            content.as_ref(),
             include_source.then_some(path),
             self.key_parsing_mode,
             self.substitution_mode == SubstitutionMode::Expand,
@@ -330,10 +335,19 @@ impl Default for EnvLoader {
     }
 }
 
-fn decode(bytes: &[u8], encoding: Encoding) -> Result<&str, Error> {
+fn decode(bytes: &[u8], encoding: Encoding) -> Result<Cow<'_, str>, Error> {
     match encoding {
-        Encoding::Utf8 => Ok(std::str::from_utf8(bytes)?),
+        Encoding::Utf8 => Ok(Cow::Borrowed(std::str::from_utf8(bytes)?)),
+        Encoding::Latin1 => Ok(Cow::Owned(decode_latin1(bytes))),
     }
+}
+
+fn decode_latin1(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        output.push(char::from(byte));
+    }
+    output
 }
 
 fn convention_paths(environment: &str) -> Vec<PathBuf> {

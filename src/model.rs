@@ -23,6 +23,8 @@ pub enum Encoding {
     /// UTF-8 text input.
     #[default]
     Utf8,
+    /// ISO-8859-1 (Latin-1) byte-to-codepoint decoding.
+    Latin1,
 }
 
 /// Variable expansion behavior for loader values.

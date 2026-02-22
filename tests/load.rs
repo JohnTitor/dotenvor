@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dotenvor::{EnvLoader, Error, KeyParsingMode, ParseErrorKind, SubstitutionMode, TargetEnv};
+use dotenvor::{
+    Encoding, EnvLoader, Error, KeyParsingMode, ParseErrorKind, SubstitutionMode, TargetEnv,
+};
 
 #[test]
 fn override_existing_false_skips_existing_values() {
@@ -216,6 +218,40 @@ fn malformed_file_returns_parse_error() {
         Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidSyntax),
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn latin1_encoding_option_decodes_non_utf8_input() {
+    let dir = make_temp_dir("latin1-encoding");
+    let file = dir.join(".env");
+    std::fs::write(&file, b"LATIN=\xE9\n").expect("failed to write latin1 file");
+
+    let mut default_loader = EnvLoader::new().path(&file).target(TargetEnv::memory());
+    let err = default_loader
+        .load()
+        .expect_err("default UTF-8 loader should reject latin1 byte");
+    match err {
+        Error::InvalidEncoding(_) => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let mut latin1_loader = EnvLoader::new()
+        .path(&file)
+        .encoding(Encoding::Latin1)
+        .target(TargetEnv::memory());
+
+    let report = latin1_loader
+        .load()
+        .expect("latin1 loader should decode successfully");
+    assert_eq!(report.files_read, 1);
+    assert_eq!(report.loaded, 1);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = latin1_loader
+        .target_env()
+        .as_memory()
+        .expect("memory target");
+    assert_eq!(map.get("LATIN").expect("LATIN should exist"), "é");
 }
 
 #[test]

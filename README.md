@@ -160,6 +160,9 @@ assert_eq!(entries.len(), 2);
 - Missing-file mode
   - `required(true)` (default): missing files return `Error::Io`
   - `required(false)`: missing files are skipped silently
+- Configurable file decoding via `.encoding(...)`
+  - `Encoding::Utf8` (default)
+  - `Encoding::Latin1` (ISO-8859-1)
 - CLI command execution (`dotenv run`)
   - Defaults to `.env` when no file is selected
   - Accepts `-f/--file` for file selection (repeatable and comma-separated)
