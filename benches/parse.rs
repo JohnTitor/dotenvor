@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -14,9 +15,13 @@ fn bench_parse(c: &mut Criterion) {
 }
 
 fn make_input(bytes: usize) -> String {
-    let line = "KEY=value\n";
-    let repeat = bytes / line.len() + 1;
-    line.repeat(repeat)
+    let mut input = String::with_capacity(bytes + 32);
+    let mut idx = 0usize;
+    while input.len() < bytes {
+        writeln!(&mut input, "KEY_{idx}=value").expect("write to string");
+        idx += 1;
+    }
+    input
 }
 
 criterion_group!(benches, bench_parse);
