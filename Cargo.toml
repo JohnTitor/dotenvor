@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
+repository = "https://github.com/JohnTitor/dotenvor"
+documentation = "https://docs.rs/dotenvor"
+categories = ["config", "parser-implementations"]
+keywords = ["dotenv", "env", "configuration", "parser", "loader"]
+readme = "README.md"
+description = "Small, fast `.env` parser and loader for Rust"
 
 [dependencies]
 
