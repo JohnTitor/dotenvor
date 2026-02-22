@@ -6,51 +6,64 @@ use crate::error::Error;
 use crate::model::{Encoding, Entry, KeyParsingMode, LoadReport, SubstitutionMode};
 use crate::parser::parse_str_with_source;
 
-/// Load `.env` from the current working directory.
+/// Load `.env` from the current working directory into the process environment.
 ///
-/// Uses [`TargetEnv::Process`] and mutates the current process environment.
-pub fn dotenv() -> Result<LoadReport, Error> {
-    from_filename(".env")
+/// # Safety
+///
+/// The caller must ensure no other threads concurrently read or write the
+/// process environment while this function runs.
+pub unsafe fn dotenv() -> Result<LoadReport, Error> {
+    unsafe { from_filename(".env") }
 }
 
 /// Load a `.env` file from a specific path into the process environment.
 ///
-/// This path uses [`TargetEnv::Process`], which writes with
-/// [`std::env::set_var`] and mutates global process state. That mutation is
-/// not thread-safe for concurrent environment access.
-pub fn from_path(path: impl AsRef<Path>) -> Result<LoadReport, Error> {
-    let mut loader = EnvLoader::new().path(path);
+/// # Safety
+///
+/// The caller must ensure no other threads concurrently read or write the
+/// process environment while this function runs.
+pub unsafe fn from_path(path: impl AsRef<Path>) -> Result<LoadReport, Error> {
+    let mut loader = EnvLoader::new()
+        .path(path)
+        .target(unsafe { TargetEnv::process() });
     loader.load()
 }
 
 /// Load multiple `.env` files into the process environment.
 ///
-/// This path uses [`TargetEnv::Process`], which writes with
-/// [`std::env::set_var`] and mutates global process state. That mutation is
-/// not thread-safe for concurrent environment access.
-pub fn from_paths<I, P>(paths: I) -> Result<LoadReport, Error>
+/// # Safety
+///
+/// The caller must ensure no other threads concurrently read or write the
+/// process environment while this function runs.
+pub unsafe fn from_paths<I, P>(paths: I) -> Result<LoadReport, Error>
 where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
 {
-    let mut loader = EnvLoader::new().paths(paths);
+    let mut loader = EnvLoader::new()
+        .paths(paths)
+        .target(unsafe { TargetEnv::process() });
     loader.load()
 }
 
-/// Load a dotenv file by filename from the current working directory.
+/// Load a dotenv file by filename into the process environment.
 ///
-/// Uses [`TargetEnv::Process`] and mutates the current process environment.
-pub fn from_filename(name: &str) -> Result<LoadReport, Error> {
-    let mut loader = EnvLoader::new().path(name).search_upward(true);
+/// # Safety
+///
+/// The caller must ensure no other threads concurrently read or write the
+/// process environment while this function runs.
+pub unsafe fn from_filename(name: &str) -> Result<LoadReport, Error> {
+    let mut loader = EnvLoader::new()
+        .path(name)
+        .search_upward(true)
+        .target(unsafe { TargetEnv::process() });
     loader.load()
 }
 
 /// Builder-style dotenv loader.
 ///
-/// `EnvLoader::new()` defaults to [`TargetEnv::Process`], so calling
-/// [`EnvLoader::load`] writes with [`std::env::set_var`] and mutates global
-/// process state. This is not thread-safe for concurrent environment access,
-/// so prefer [`TargetEnv::memory`] outside single-threaded startup paths.
+/// `EnvLoader::new()` defaults to [`TargetEnv::memory`], which keeps values in
+/// an in-memory map and avoids process-global mutation by default.
 #[derive(Debug, Clone)]
 pub struct EnvLoader {
     paths: Vec<PathBuf>,
@@ -67,7 +80,7 @@ pub struct EnvLoader {
 impl EnvLoader {
     /// Create a new loader with default settings.
     ///
-    /// The default target is [`TargetEnv::Process`].
+    /// The default target is [`TargetEnv::memory`].
     pub fn new() -> Self {
         Self::default()
     }
@@ -277,7 +290,7 @@ impl Default for EnvLoader {
             substitution_mode: SubstitutionMode::Disabled,
             verbose: false,
             quiet: false,
-            target: TargetEnv::Process,
+            target: TargetEnv::memory(),
         }
     }
 }
@@ -509,6 +522,7 @@ mod tests {
         let loader = EnvLoader::new();
         assert!(!loader.logging_enabled());
         assert!(!loader.search_upward);
+        assert!(loader.target_env().as_memory().is_some());
     }
 
     #[test]

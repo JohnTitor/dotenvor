@@ -33,14 +33,14 @@ We don't treat MSRV changes as breaking, it may be changed in any release.
 use dotenvor::dotenv;
 
 // Looks for ".env" and searches parent directories if needed.
-let report = dotenv()?;
+let report = unsafe { dotenv()? };
 println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
 # Ok::<(), dotenvor::Error>(())
 ```
 
-`dotenv()` uses `TargetEnv::Process` by default, so it mutates process-wide
-state via `std::env::set_var` and is not thread-safe for concurrent environment
-access. In concurrent code or isolated tests, prefer a loader configured with
+`dotenv()` mutates process-wide state via `std::env::set_var` and is `unsafe`,
+because callers must guarantee no concurrent process-environment access.
+In concurrent code or isolated tests, prefer a loader configured with
 `.target(TargetEnv::memory())`.
 
 ### Builder API with memory target
@@ -107,10 +107,10 @@ assert_eq!(entries.len(), 2);
 
 - Multi-file loading with deterministic precedence
 - `override_existing(false)` by default
-- Load target can be process env or in-memory map (`TargetEnv::Process` is the
-  default and mutates process-wide state via `std::env::set_var`; this is not
-  thread-safe for concurrent environment access, so use `TargetEnv::memory()`
-  for isolated/concurrent scenarios)
+- `EnvLoader` defaults to `TargetEnv::memory()` for process-isolated loads
+- Process-env loading is available via `unsafe { TargetEnv::process() }` and
+  unsafe convenience functions (`dotenv`, `from_path`, `from_paths`,
+  `from_filename`)
 - Upward file search support
   - `dotenv()` / `from_filename(...)`: upward search enabled
   - `EnvLoader`: upward search disabled by default (enable with `.search_upward(true)`)

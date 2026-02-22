@@ -1,9 +1,11 @@
 //! Parse and load `.env` files.
 //!
+//! [`EnvLoader::new`] defaults to [`TargetEnv::memory`], so loading is process-
+//! isolated by default.
+//!
 //! Convenience loaders (`dotenv`, `from_path`, `from_paths`, `from_filename`)
-//! and [`EnvLoader::new`] default to [`TargetEnv::Process`], which mutates the
-//! process environment via [`std::env::set_var`]. This is not thread-safe for
-//! concurrent environment access, so prefer [`TargetEnv::memory`].
+//! mutate the process environment and are `unsafe`, because callers must
+//! guarantee no concurrent process-environment access.
 
 mod env;
 mod error;
