@@ -4,29 +4,54 @@ use std::io::BufRead;
 use std::path::Path;
 
 use crate::error::{Error, ParseError, ParseErrorKind};
-use crate::model::Entry;
+use crate::model::{Entry, KeyParsingMode};
 
 /// Parse dotenv entries from UTF-8 text.
 pub fn parse_str(input: &str) -> Result<Vec<Entry>, Error> {
-    parse_str_with_source(input, None).map_err(Error::from)
+    parse_str_with_mode(input, KeyParsingMode::Strict)
+}
+
+/// Parse dotenv entries from UTF-8 text using a specific key parsing mode.
+pub fn parse_str_with_mode(
+    input: &str,
+    key_parsing_mode: KeyParsingMode,
+) -> Result<Vec<Entry>, Error> {
+    parse_str_with_source(input, None, key_parsing_mode).map_err(Error::from)
 }
 
 /// Parse dotenv entries from UTF-8 bytes.
 pub fn parse_bytes(input: &[u8]) -> Result<Vec<Entry>, Error> {
+    parse_bytes_with_mode(input, KeyParsingMode::Strict)
+}
+
+/// Parse dotenv entries from UTF-8 bytes using a specific key parsing mode.
+pub fn parse_bytes_with_mode(
+    input: &[u8],
+    key_parsing_mode: KeyParsingMode,
+) -> Result<Vec<Entry>, Error> {
     let text = std::str::from_utf8(input)?;
-    parse_str(text)
+    parse_str_with_mode(text, key_parsing_mode)
 }
 
 /// Parse dotenv entries from a buffered reader.
-pub fn parse_reader<R: BufRead>(mut reader: R) -> Result<Vec<Entry>, Error> {
+pub fn parse_reader<R: BufRead>(reader: R) -> Result<Vec<Entry>, Error> {
+    parse_reader_with_mode(reader, KeyParsingMode::Strict)
+}
+
+/// Parse dotenv entries from a buffered reader using a specific key parsing mode.
+pub fn parse_reader_with_mode<R: BufRead>(
+    mut reader: R,
+    key_parsing_mode: KeyParsingMode,
+) -> Result<Vec<Entry>, Error> {
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
-    parse_bytes(&buf)
+    parse_bytes_with_mode(&buf, key_parsing_mode)
 }
 
 pub(crate) fn parse_str_with_source(
     input: &str,
     source: Option<&Path>,
+    key_parsing_mode: KeyParsingMode,
 ) -> Result<Vec<Entry>, ParseError> {
     let normalized = normalize_newlines(input);
     let input = normalized.as_ref();
@@ -44,6 +69,7 @@ pub(crate) fn parse_str_with_source(
         let mut idx = offset;
         let mut newline_count = 0u32;
         let mut active_quote: Option<u8> = None;
+        let mut value_started = false;
         let mut previous: Option<u8> = None;
 
         while idx < bytes.len() {
@@ -58,7 +84,9 @@ pub(crate) fn parse_str_with_source(
                 if byte == quote && previous != Some(b'\\') {
                     active_quote = None;
                 }
-            } else if byte == b'"' || byte == b'\'' || byte == b'`' {
+            } else if !value_started && byte == b'=' {
+                value_started = true;
+            } else if value_started && (byte == b'"' || byte == b'\'' || byte == b'`') {
                 active_quote = Some(byte);
             }
 
@@ -67,7 +95,7 @@ pub(crate) fn parse_str_with_source(
         }
 
         let statement = &input[statement_start..idx];
-        let parsed = parse_line(statement, statement_line, source)?;
+        let parsed = parse_line(statement, statement_line, source, key_parsing_mode)?;
         let Some(entry) = parsed else {
             if idx < bytes.len() && bytes[idx] == b'\n' {
                 idx += 1;
@@ -119,6 +147,7 @@ fn parse_line(
     line: &str,
     line_num: u32,
     source: Option<&Path>,
+    key_parsing_mode: KeyParsingMode,
 ) -> Result<Option<Entry>, ParseError> {
     let mut working = line.trim_start();
     if working.is_empty() || working.starts_with('#') {
@@ -152,7 +181,7 @@ fn parse_line(
     if key.is_empty() {
         return Err(ParseError::new(line_num, 1, ParseErrorKind::MissingKey));
     }
-    if !is_valid_key(key) {
+    if !is_valid_key(key, key_parsing_mode) {
         return Err(ParseError::new(line_num, 1, ParseErrorKind::InvalidKey));
     }
 
@@ -286,12 +315,19 @@ fn parse_double_quoted(input: &str, line_num: u32, column: u32) -> Result<String
     Ok(out)
 }
 
-fn is_valid_key(key: &str) -> bool {
-    key.chars().all(is_valid_key_char)
+fn is_valid_key(key: &str, key_parsing_mode: KeyParsingMode) -> bool {
+    match key_parsing_mode {
+        KeyParsingMode::Strict => key.chars().all(is_valid_strict_key_char),
+        KeyParsingMode::Permissive => key.chars().all(is_valid_permissive_key_char),
+    }
 }
 
-fn is_valid_key_char(ch: char) -> bool {
+fn is_valid_strict_key_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-'
+}
+
+fn is_valid_permissive_key_char(ch: char) -> bool {
+    ch.is_ascii() && ('!'..='~').contains(&ch) && ch != '='
 }
 
 #[cfg(test)]
@@ -427,5 +463,51 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].value, "line1\nline2");
         assert_eq!(parsed[1].value, "ok");
+    }
+
+    #[test]
+    fn permissive_mode_accepts_extended_key_names() {
+        let input = "KEYS:CAN:HAVE_COLONS=1\n%TEMP%=/tmp\n";
+        let parsed =
+            parse_str_with_mode(input, KeyParsingMode::Permissive).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "KEYS:CAN:HAVE_COLONS");
+        assert_eq!(parsed[0].value, "1");
+        assert_eq!(parsed[1].key, "%TEMP%");
+        assert_eq!(parsed[1].value, "/tmp");
+    }
+
+    #[test]
+    fn permissive_mode_does_not_treat_quotes_in_keys_as_value_quotes() {
+        let input = "A\"B=1\nC=2\n";
+        let parsed =
+            parse_str_with_mode(input, KeyParsingMode::Permissive).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "A\"B");
+        assert_eq!(parsed[0].value, "1");
+        assert_eq!(parsed[1].key, "C");
+        assert_eq!(parsed[1].value, "2");
+    }
+
+    #[test]
+    fn strict_mode_rejects_extended_key_names() {
+        let input = "KEYS:CAN:HAVE_COLONS=1\n";
+        let err =
+            parse_str_with_mode(input, KeyParsingMode::Strict).expect_err("expected parse error");
+        match err {
+            Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidKey),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_reader_with_mode_supports_permissive_keys() {
+        let reader = std::io::Cursor::new("KEY:ONE=1\n");
+        let parsed = parse_reader_with_mode(reader, KeyParsingMode::Permissive)
+            .expect("parse should succeed");
+        assert_eq!(parsed[0].key, "KEY:ONE");
+        assert_eq!(parsed[0].value, "1");
     }
 }

@@ -41,11 +41,12 @@ println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
 ### Builder API with memory target
 
 ```rust
-use dotenvor::{EnvLoader, SubstitutionMode, TargetEnv};
+use dotenvor::{EnvLoader, KeyParsingMode, SubstitutionMode, TargetEnv};
 
 let mut loader = EnvLoader::new()
     .path(".env")
     .search_upward(true)
+    .key_parsing_mode(KeyParsingMode::Strict)
     .substitution_mode(SubstitutionMode::Expand)
     .override_existing(false)
     .target(TargetEnv::memory());
@@ -68,6 +69,19 @@ assert_eq!(entries.len(), 2);
 # Ok::<(), dotenvor::Error>(())
 ```
 
+### Opt in to permissive key parsing
+
+```rust
+use dotenvor::{parse_str_with_mode, KeyParsingMode};
+
+let entries = parse_str_with_mode(
+    "KEYS:CAN:HAVE_COLONS=1\n%TEMP%=/tmp\n",
+    KeyParsingMode::Permissive,
+)?;
+assert_eq!(entries.len(), 2);
+# Ok::<(), dotenvor::Error>(())
+```
+
 ## Implemented Behavior
 
 ### Parsing
@@ -82,6 +96,7 @@ assert_eq!(entries.len(), 2);
 - Duplicate keys: last value wins
 - Reader, string, and bytes parsing APIs
 - Multiline quoted values (including PEM-style blocks)
+- Strict key mode by default, plus opt-in `KeyParsingMode::Permissive`
 
 ### Loading
 

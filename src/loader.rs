@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::env::TargetEnv;
 use crate::error::Error;
-use crate::model::{Encoding, Entry, LoadReport, SubstitutionMode};
+use crate::model::{Encoding, Entry, KeyParsingMode, LoadReport, SubstitutionMode};
 use crate::parser::parse_str_with_source;
 
 /// Load `.env` from the current working directory.
@@ -39,6 +39,7 @@ pub struct EnvLoader {
     paths: Vec<PathBuf>,
     encoding: Encoding,
     override_existing: bool,
+    key_parsing_mode: KeyParsingMode,
     search_upward: bool,
     substitution_mode: SubstitutionMode,
     verbose: bool,
@@ -73,6 +74,11 @@ impl EnvLoader {
 
     pub fn override_existing(mut self, override_existing: bool) -> Self {
         self.override_existing = override_existing;
+        self
+    }
+
+    pub fn key_parsing_mode(mut self, key_parsing_mode: KeyParsingMode) -> Self {
+        self.key_parsing_mode = key_parsing_mode;
         self
     }
 
@@ -158,8 +164,12 @@ impl EnvLoader {
             self.log(&format!("reading {}", path.display()));
             let bytes = std::fs::read(path)?;
             let content = decode(&bytes, self.encoding)?;
-            let parsed = parse_str_with_source(content, include_source.then_some(path.as_path()))
-                .map_err(Error::from)?;
+            let parsed = parse_str_with_source(
+                content,
+                include_source.then_some(path.as_path()),
+                self.key_parsing_mode,
+            )
+            .map_err(Error::from)?;
             return Ok((parsed, 1));
         }
 
@@ -172,8 +182,12 @@ impl EnvLoader {
             let bytes = std::fs::read(&path)?;
             files_read += 1;
             let content = decode(&bytes, self.encoding)?;
-            let parsed = parse_str_with_source(content, include_source.then_some(path.as_path()))
-                .map_err(Error::from)?;
+            let parsed = parse_str_with_source(
+                content,
+                include_source.then_some(path.as_path()),
+                self.key_parsing_mode,
+            )
+            .map_err(Error::from)?;
             merged_entries.reserve(parsed.len());
             by_key.reserve(parsed.len());
 
@@ -195,7 +209,12 @@ impl EnvLoader {
             return;
         }
 
-        let mut resolver = SubstitutionResolver::new(entries, &self.target, self.override_existing);
+        let mut resolver = SubstitutionResolver::new(
+            entries,
+            &self.target,
+            self.override_existing,
+            self.key_parsing_mode,
+        );
         for entry in entries.iter_mut() {
             entry.value = resolver.resolve_entry(&entry.key);
         }
@@ -233,6 +252,7 @@ impl Default for EnvLoader {
             paths: Vec::new(),
             encoding: Encoding::Utf8,
             override_existing: false,
+            key_parsing_mode: KeyParsingMode::Strict,
             search_upward: false,
             substitution_mode: SubstitutionMode::Disabled,
             verbose: false,
@@ -278,10 +298,16 @@ struct SubstitutionResolver<'a> {
     resolved_values: HashMap<String, String>,
     target: &'a TargetEnv,
     override_existing: bool,
+    key_parsing_mode: KeyParsingMode,
 }
 
 impl<'a> SubstitutionResolver<'a> {
-    fn new(entries: &[Entry], target: &'a TargetEnv, override_existing: bool) -> Self {
+    fn new(
+        entries: &[Entry],
+        target: &'a TargetEnv,
+        override_existing: bool,
+        key_parsing_mode: KeyParsingMode,
+    ) -> Self {
         let raw_values = entries
             .iter()
             .map(|entry| (entry.key.clone(), entry.value.clone()))
@@ -292,6 +318,7 @@ impl<'a> SubstitutionResolver<'a> {
             resolved_values: HashMap::new(),
             target,
             override_existing,
+            key_parsing_mode,
         }
     }
 
@@ -316,7 +343,7 @@ impl<'a> SubstitutionResolver<'a> {
         };
 
         stack.push(key.to_owned());
-        let expanded = expand_template(&raw_value, |name, token| {
+        let expanded = expand_template(&raw_value, self.key_parsing_mode, |name, token| {
             self.resolve_placeholder(name, token, stack)
         });
         stack.pop();
@@ -341,7 +368,7 @@ impl<'a> SubstitutionResolver<'a> {
     }
 }
 
-fn expand_template<F>(input: &str, mut resolve: F) -> String
+fn expand_template<F>(input: &str, key_parsing_mode: KeyParsingMode, mut resolve: F) -> String
 where
     F: FnMut(&str, &str) -> String,
 {
@@ -356,7 +383,9 @@ where
             continue;
         }
 
-        let Some((name_start, name_end, token_end)) = parse_placeholder(input, idx) else {
+        let Some((name_start, name_end, token_end)) =
+            parse_placeholder(input, idx, key_parsing_mode)
+        else {
             idx += 1;
             continue;
         };
@@ -375,7 +404,11 @@ where
     out
 }
 
-fn parse_placeholder(input: &str, start: usize) -> Option<(usize, usize, usize)> {
+fn parse_placeholder(
+    input: &str,
+    start: usize,
+    key_parsing_mode: KeyParsingMode,
+) -> Option<(usize, usize, usize)> {
     let bytes = input.as_bytes();
     if start + 1 >= bytes.len() {
         return None;
@@ -394,7 +427,11 @@ fn parse_placeholder(input: &str, start: usize) -> Option<(usize, usize, usize)>
         let name_start = start + 2;
         let name_end = end;
         let name = &input[name_start..name_end];
-        if name.is_empty() || !name.bytes().all(is_braced_var_char) {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| is_braced_var_char(byte, key_parsing_mode))
+        {
             return None;
         }
 
@@ -414,8 +451,17 @@ fn parse_placeholder(input: &str, start: usize) -> Option<(usize, usize, usize)>
     Some((name_start, name_end, name_end))
 }
 
-fn is_braced_var_char(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' || byte == b'-'
+fn is_braced_var_char(byte: u8, key_parsing_mode: KeyParsingMode) -> bool {
+    match key_parsing_mode {
+        KeyParsingMode::Strict => {
+            byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' || byte == b'-'
+        }
+        KeyParsingMode::Permissive => is_valid_permissive_key_byte(byte),
+    }
+}
+
+fn is_valid_permissive_key_byte(byte: u8) -> bool {
+    byte.is_ascii() && (b'!'..=b'~').contains(&byte) && byte != b'='
 }
 
 fn is_unbraced_var_start(byte: u8) -> bool {
@@ -433,6 +479,7 @@ fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::{EnvLoader, resolve_upward_path};
+    use crate::model::KeyParsingMode;
     use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -460,6 +507,12 @@ mod tests {
     fn search_upward_builder_sets_flag() {
         let loader = EnvLoader::new().search_upward(true);
         assert!(loader.search_upward);
+    }
+
+    #[test]
+    fn key_parsing_mode_builder_sets_flag() {
+        let loader = EnvLoader::new().key_parsing_mode(KeyParsingMode::Permissive);
+        assert_eq!(loader.key_parsing_mode, KeyParsingMode::Permissive);
     }
 
     #[test]

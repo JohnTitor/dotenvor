@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dotenvor::{EnvLoader, Error, ParseErrorKind, SubstitutionMode, TargetEnv};
+use dotenvor::{EnvLoader, Error, KeyParsingMode, ParseErrorKind, SubstitutionMode, TargetEnv};
 
 #[test]
 fn override_existing_false_skips_existing_values() {
@@ -104,6 +104,43 @@ fn malformed_file_returns_parse_error() {
         Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidSyntax),
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn strict_key_mode_rejects_extended_key_names() {
+    let dir = make_temp_dir("strict-keys");
+    let file = dir.join(".env");
+    write_file(&file, "KEY:ONE=1\n");
+
+    let mut loader = EnvLoader::new().path(file).target(TargetEnv::memory());
+    let err = loader.load().expect_err("expected parse error");
+
+    match err {
+        Error::Parse(parse_err) => assert_eq!(parse_err.kind, ParseErrorKind::InvalidKey),
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn permissive_key_mode_loads_extended_keys_and_substitutions() {
+    let dir = make_temp_dir("permissive-keys");
+    let file = dir.join(".env");
+    write_file(&file, "KEY:ONE=one\nKEY:TWO=${KEY:ONE}11\n%TEMP%=/tmp\n");
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .key_parsing_mode(KeyParsingMode::Permissive)
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.loaded, 3);
+    assert_eq!(report.skipped_existing, 0);
+
+    let map = loader.target_env().as_memory().expect("memory target");
+    assert_eq!(map.get("KEY:ONE").expect("KEY:ONE should exist"), "one");
+    assert_eq!(map.get("KEY:TWO").expect("KEY:TWO should exist"), "one11");
+    assert_eq!(map.get("%TEMP%").expect("%TEMP% should exist"), "/tmp");
 }
 
 #[test]

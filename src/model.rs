@@ -34,3 +34,13 @@ pub enum SubstitutionMode {
     /// Expand `$VAR` and `${VAR}` placeholders.
     Expand,
 }
+
+/// Key validation behavior for parser and loader entry parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyParsingMode {
+    /// Existing key character rules (`[A-Za-z0-9_.-]+`).
+    #[default]
+    Strict,
+    /// POSIX-portable ASCII keys (except `=`) for cross-platform compatibility.
+    Permissive,
+}
