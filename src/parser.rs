@@ -70,7 +70,6 @@ pub(crate) fn parse_str_with_source(
         let mut newline_count = 0u32;
         let mut active_quote: Option<u8> = None;
         let mut value_started = false;
-        let mut previous: Option<u8> = None;
 
         while idx < bytes.len() {
             let byte = bytes[idx];
@@ -81,7 +80,7 @@ pub(crate) fn parse_str_with_source(
                     break;
                 }
             } else if let Some(quote) = active_quote {
-                if byte == quote && previous != Some(b'\\') {
+                if byte == quote && !is_preceded_by_odd_backslashes(bytes, idx) {
                     active_quote = None;
                 }
             } else if !value_started && byte == b'=' {
@@ -89,8 +88,6 @@ pub(crate) fn parse_str_with_source(
             } else if value_started && (byte == b'"' || byte == b'\'' || byte == b'`') {
                 active_quote = Some(byte);
             }
-
-            previous = Some(byte);
             idx += 1;
         }
 
@@ -141,6 +138,21 @@ fn normalize_newlines(input: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(out)
+}
+
+fn is_preceded_by_odd_backslashes(bytes: &[u8], idx: usize) -> bool {
+    if idx == 0 {
+        return false;
+    }
+
+    let mut cursor = idx;
+    let mut backslash_count = 0usize;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        cursor -= 1;
+        backslash_count += 1;
+    }
+
+    backslash_count % 2 == 1
 }
 
 fn parse_line(
@@ -237,7 +249,7 @@ fn parse_literal_quoted(
     let mut closing_idx = None;
     for (idx, ch) in input.char_indices().skip(1) {
         if ch == quote {
-            if input.as_bytes().get(idx.saturating_sub(1)) == Some(&b'\\') {
+            if is_preceded_by_odd_backslashes(input.as_bytes(), idx) {
                 continue;
             }
             closing_idx = Some(idx);
@@ -441,6 +453,42 @@ mod tests {
             parsed[0].value,
             "line one\nthis is \\'quoted\\'\none more line"
         );
+    }
+
+    #[test]
+    fn parses_double_quoted_value_ending_with_escaped_backslash() {
+        let input = "PATH=\"C:\\\\Users\\\\\"\nNEXT=ok\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "PATH");
+        assert_eq!(parsed[0].value, "C:\\Users\\");
+        assert_eq!(parsed[1].key, "NEXT");
+        assert_eq!(parsed[1].value, "ok");
+    }
+
+    #[test]
+    fn parses_single_quoted_value_ending_with_backslash() {
+        let input = "A='C:\\\\Temp\\\\'\nB=ok\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "A");
+        assert_eq!(parsed[0].value, "C:\\\\Temp\\\\");
+        assert_eq!(parsed[1].key, "B");
+        assert_eq!(parsed[1].value, "ok");
+    }
+
+    #[test]
+    fn parses_backtick_quoted_value_ending_with_backslash() {
+        let input = "A=`C:\\\\Temp\\\\`\nB=ok\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "A");
+        assert_eq!(parsed[0].value, "C:\\\\Temp\\\\");
+        assert_eq!(parsed[1].key, "B");
+        assert_eq!(parsed[1].value, "ok");
     }
 
     #[test]
