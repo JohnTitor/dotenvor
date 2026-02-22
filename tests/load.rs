@@ -299,13 +299,15 @@ fn substitution_expands_permissive_placeholders_with_punctuation_keys() {
 }
 
 #[test]
-fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
-    let dir = make_temp_dir("substitution-shell-modifiers-literal");
+fn substitution_expands_colon_minus_defaults_in_strict_mode() {
+    let dir = make_temp_dir("substitution-colon-minus-defaults");
     let file = dir.join(".env");
     write_file(
         &file,
         "SET=from_file\n\
+         EMPTY=\n\
          COLON_MINUS=${SET:-fallback}\n\
+         EMPTY_COLON_MINUS=${EMPTY:-fallback}\n\
          MINUS=${SET-fallback}\n\
          COLON_PLUS=${SET:+alt}\n\
          PLUS=${SET+alt}\n\
@@ -313,7 +315,7 @@ fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
          Q=${SET?err}\n\
          MISSING_COLON_MINUS=${MISSING:-fallback}\n\
          MISSING_MINUS=${MISSING-fallback}\n\
-         COMPOSITE=pre-${SET:-fallback}-post\n",
+         COMPOSITE=pre-${MISSING:-fallback}-post\n",
     );
 
     let mut loader = EnvLoader::new()
@@ -325,9 +327,15 @@ fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
 
     let map = loader.target_env().as_memory().expect("memory target");
     assert_eq!(map.get("SET").expect("SET should exist"), "from_file");
+    assert_eq!(map.get("EMPTY").expect("EMPTY should exist"), "");
     assert_eq!(
         map.get("COLON_MINUS").expect("COLON_MINUS should exist"),
-        "${SET:-fallback}"
+        "from_file"
+    );
+    assert_eq!(
+        map.get("EMPTY_COLON_MINUS")
+            .expect("EMPTY_COLON_MINUS should exist"),
+        "fallback"
     );
     assert_eq!(
         map.get("MINUS").expect("MINUS should exist"),
@@ -346,7 +354,7 @@ fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
     assert_eq!(
         map.get("MISSING_COLON_MINUS")
             .expect("MISSING_COLON_MINUS should exist"),
-        "${MISSING:-fallback}"
+        "fallback"
     );
     assert_eq!(
         map.get("MISSING_MINUS")
@@ -355,7 +363,7 @@ fn substitution_keeps_shell_modifier_tokens_literal_in_strict_mode() {
     );
     assert_eq!(
         map.get("COMPOSITE").expect("COMPOSITE should exist"),
-        "pre-${SET:-fallback}-post"
+        "pre-fallback-post"
     );
 }
 

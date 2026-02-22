@@ -31,7 +31,7 @@ pub enum SubstitutionMode {
     /// Keep values as parsed with no expansion.
     #[default]
     Disabled,
-    /// Expand `$VAR` and `${VAR}` placeholders.
+    /// Expand `$VAR`, `${VAR}`, and `${VAR:-fallback}` placeholders.
     Expand,
 }
 

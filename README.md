@@ -8,7 +8,7 @@ It focuses on predictable behavior, low dependency overhead, and an ergonomic AP
 
 - Fast parser for common `.env` syntax
 - Builder-style loader with multi-file precedence
-- Optional variable substitution (`$VAR`, `${VAR}`)
+- Optional variable substitution (`$VAR`, `${VAR}`, `${VAR:-fallback}`)
 - Optional upward search for `.env` files
 - Process-env or in-memory targets for safer tests
 - Quiet/verbose logging controls
@@ -122,7 +122,7 @@ assert_eq!(entries.len(), 2);
 ### Substitution
 
 - Optional mode: `SubstitutionMode::Expand`
-- Expands `$VAR` and `${VAR}`
+- Expands `$VAR`, `${VAR}`, and `${VAR:-fallback}` (strict key mode)
 - Supports chained and forward references
 - Falls back to current target environment values when needed
 

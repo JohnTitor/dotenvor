@@ -394,9 +394,10 @@ impl<'a> SubstitutionResolver<'a> {
         };
 
         stack.push(key.to_owned());
-        let expanded = expand_template(&raw_value, self.key_parsing_mode, |name, token| {
-            self.resolve_placeholder(name, token, stack)
-        });
+        let expanded =
+            expand_template(&raw_value, self.key_parsing_mode, |name, token, default| {
+                self.resolve_placeholder(name, token, default, stack)
+            });
         stack.pop();
 
         self.resolved_values
@@ -404,24 +405,37 @@ impl<'a> SubstitutionResolver<'a> {
         expanded
     }
 
-    fn resolve_placeholder(&mut self, name: &str, token: &str, stack: &mut Vec<String>) -> String {
+    fn resolve_placeholder(
+        &mut self,
+        name: &str,
+        token: &str,
+        default: Option<&str>,
+        stack: &mut Vec<String>,
+    ) -> String {
         if stack.iter().any(|item| item == name) {
-            return token.to_owned();
+            return default.unwrap_or(token).to_owned();
         }
 
-        if self.raw_values.contains_key(name) {
-            return self.resolve_key(name, stack);
+        let resolved = if self.raw_values.contains_key(name) {
+            Some(self.resolve_key(name, stack))
+        } else {
+            self.target.get_var(name)
+        };
+
+        if let Some(value) = resolved {
+            if default.is_some() && value.is_empty() {
+                return default.unwrap_or_default().to_owned();
+            }
+            return value;
         }
 
-        self.target
-            .get_var(name)
-            .unwrap_or_else(|| token.to_owned())
+        default.unwrap_or(token).to_owned()
     }
 }
 
 fn expand_template<F>(input: &str, key_parsing_mode: KeyParsingMode, mut resolve: F) -> String
 where
-    F: FnMut(&str, &str) -> String,
+    F: FnMut(&str, &str, Option<&str>) -> String,
 {
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0usize;
@@ -434,32 +448,39 @@ where
             continue;
         }
 
-        let Some((name_start, name_end, token_end)) =
-            parse_placeholder(input, idx, key_parsing_mode)
-        else {
+        let Some(placeholder) = parse_placeholder(input, idx, key_parsing_mode) else {
             idx += 1;
             continue;
         };
 
-        let name = &input[name_start..name_end];
-        let token = &input[idx..token_end];
+        let name = &input[placeholder.name_start..placeholder.name_end];
+        let token = &input[idx..placeholder.token_end];
+        let default = placeholder.default.map(|(start, end)| &input[start..end]);
 
         out.push_str(&input[cursor..idx]);
-        out.push_str(&resolve(name, token));
+        out.push_str(&resolve(name, token, default));
 
-        cursor = token_end;
-        idx = token_end;
+        cursor = placeholder.token_end;
+        idx = placeholder.token_end;
     }
 
     out.push_str(&input[cursor..]);
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Placeholder {
+    name_start: usize,
+    name_end: usize,
+    default: Option<(usize, usize)>,
+    token_end: usize,
+}
+
 fn parse_placeholder(
     input: &str,
     start: usize,
     key_parsing_mode: KeyParsingMode,
-) -> Option<(usize, usize, usize)> {
+) -> Option<Placeholder> {
     let bytes = input.as_bytes();
     if start + 1 >= bytes.len() {
         return None;
@@ -476,6 +497,31 @@ fn parse_placeholder(
         }
 
         let name_start = start + 2;
+        let token_end = end + 1;
+
+        if key_parsing_mode == KeyParsingMode::Strict {
+            let inner = &input[name_start..end];
+            if let Some(operator_idx) = inner.find(":-") {
+                let name_end = name_start + operator_idx;
+                let default_start = name_end + 2;
+                let name = &input[name_start..name_end];
+                if name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|byte| is_braced_var_char(byte, key_parsing_mode))
+                {
+                    return None;
+                }
+
+                return Some(Placeholder {
+                    name_start,
+                    name_end,
+                    default: Some((default_start, end)),
+                    token_end,
+                });
+            }
+        }
+
         let name_end = end;
         let name = &input[name_start..name_end];
         if name.is_empty()
@@ -486,7 +532,12 @@ fn parse_placeholder(
             return None;
         }
 
-        return Some((name_start, name_end, end + 1));
+        return Some(Placeholder {
+            name_start,
+            name_end,
+            default: None,
+            token_end,
+        });
     }
 
     let name_start = start + 1;
@@ -499,7 +550,12 @@ fn parse_placeholder(
         name_end += 1;
     }
 
-    Some((name_start, name_end, name_end))
+    Some(Placeholder {
+        name_start,
+        name_end,
+        default: None,
+        token_end: name_end,
+    })
 }
 
 fn is_braced_var_char(byte: u8, key_parsing_mode: KeyParsingMode) -> bool {
