@@ -70,7 +70,8 @@ pub(crate) fn parse_str_with_source(
         let mut idx = offset;
         let mut newline_count = 0u32;
         let mut active_quote: Option<u8> = None;
-        let mut value_started = false;
+        let mut seen_equals = false;
+        let mut awaiting_value_start = false;
 
         while idx < bytes.len() {
             let byte = bytes[idx];
@@ -84,10 +85,16 @@ pub(crate) fn parse_str_with_source(
                 if byte == quote && !is_preceded_by_odd_backslashes(bytes, idx) {
                     active_quote = None;
                 }
-            } else if !value_started && byte == b'=' {
-                value_started = true;
-            } else if value_started && (byte == b'"' || byte == b'\'' || byte == b'`') {
+            } else if !seen_equals && byte == b'=' {
+                seen_equals = true;
+                awaiting_value_start = true;
+            } else if awaiting_value_start && byte.is_ascii_whitespace() {
+                // Skip leading value whitespace before deciding whether value is quoted.
+            } else if awaiting_value_start && (byte == b'"' || byte == b'\'' || byte == b'`') {
                 active_quote = Some(byte);
+                awaiting_value_start = false;
+            } else if awaiting_value_start {
+                awaiting_value_start = false;
             }
             idx += 1;
         }
@@ -554,6 +561,32 @@ mod tests {
         assert_eq!(parsed[0].value, "line 1\nline 2");
         assert_eq!(parsed[1].key, "B");
         assert_eq!(parsed[1].value, "2");
+    }
+
+    #[test]
+    fn does_not_start_multiline_mode_for_quote_in_unquoted_value() {
+        let input = "A=value\"still-unquoted\nB=2\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "A");
+        assert_eq!(parsed[0].value, "value\"still-unquoted");
+        assert_eq!(parsed[1].key, "B");
+        assert_eq!(parsed[1].value, "2");
+    }
+
+    #[test]
+    fn does_not_start_multiline_mode_for_quote_in_trailing_comment() {
+        let input = "A=1 # comment with \"unterminated quote\nB=2\nC=3\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].key, "A");
+        assert_eq!(parsed[0].value, "1");
+        assert_eq!(parsed[1].key, "B");
+        assert_eq!(parsed[1].value, "2");
+        assert_eq!(parsed[2].key, "C");
+        assert_eq!(parsed[2].value, "3");
     }
 
     #[test]
