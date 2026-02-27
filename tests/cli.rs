@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -134,6 +136,46 @@ fn run_search_upward_finds_parent_file_when_requested() {
 
     assert_success(&output);
     assert_eq!(stdout_trimmed(&output), "from_parent");
+}
+
+#[test]
+fn run_expand_fails_when_inherited_env_value_is_not_utf8() {
+    let dir = make_temp_dir("cli-expand-non-utf8");
+    write_file(
+        &dir.join(".env"),
+        "DOTENVOR_CLI_EXPAND_RESULT=${DOTENVOR_CLI_PARENT_NON_UTF8}\n",
+    );
+
+    let mut command = Command::new(dotenv_bin());
+    command.current_dir(&dir).args([
+        "run",
+        "--expand",
+        "--",
+        "printenv",
+        "DOTENVOR_CLI_EXPAND_RESULT",
+    ]);
+    command.env(
+        "DOTENVOR_CLI_PARENT_NON_UTF8",
+        OsString::from_vec(vec![0x66, 0x80, 0x67]),
+    );
+    let output = command.output().expect("failed to run dotenv binary");
+
+    assert!(
+        !output.status.success(),
+        "expected failure when expansion reads non-UTF-8 env value: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("DOTENVOR_CLI_PARENT_NON_UTF8"),
+        "expected offending key in stderr: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("not valid UTF-8"),
+        "expected UTF-8 validation error in stderr: {stderr:?}"
+    );
 }
 
 fn run_dotenv(dir: &Path, args: &[&str], env_pair: Option<(&str, &str)>) -> Output {

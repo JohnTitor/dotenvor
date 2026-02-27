@@ -239,7 +239,12 @@ fn execute_run(options: RunOptions) -> Result<i32, String> {
 }
 
 fn load_entries(options: &RunOptions) -> Result<Vec<dotenvor::Entry>, Error> {
-    let env_snapshot = snapshot_process_env();
+    let target = if options.substitution_mode == SubstitutionMode::Expand {
+        TargetEnv::from_memory(snapshot_process_env()?)
+    } else {
+        TargetEnv::memory()
+    };
+
     let loader = EnvLoader::new()
         .paths(&options.files)
         .required(options.required)
@@ -249,19 +254,30 @@ fn load_entries(options: &RunOptions) -> Result<Vec<dotenvor::Entry>, Error> {
         .key_parsing_mode(options.key_parsing_mode)
         .verbose(options.verbose)
         .quiet(options.quiet)
-        .target(TargetEnv::from_memory(env_snapshot));
+        .target(target);
     loader.parse_only()
 }
 
-fn snapshot_process_env() -> BTreeMap<String, String> {
-    env::vars_os()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.to_string_lossy().into_owned(),
+fn snapshot_process_env() -> Result<BTreeMap<String, String>, Error> {
+    let mut snapshot = BTreeMap::new();
+    for (key, value) in env::vars_os() {
+        let key = key.into_string().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "process environment contains a non-UTF-8 variable name; `dotenv run --expand` requires UTF-8 environment data",
             )
-        })
-        .collect()
+        })?;
+        let value = value.into_string().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "process environment variable `{key}` value is not valid UTF-8; `dotenv run --expand` requires UTF-8 environment data"
+                ),
+            )
+        })?;
+        snapshot.insert(key, value);
+    }
+    Ok(snapshot)
 }
 
 #[cfg(unix)]
