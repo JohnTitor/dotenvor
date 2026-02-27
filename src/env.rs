@@ -2,12 +2,16 @@ use std::collections::BTreeMap;
 use std::io::{Error as IoError, ErrorKind};
 
 /// Destination for loaded environment variables.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// This type intentionally does not implement [`Clone`]. Cloning a process
+/// target would duplicate access to process-global mutation behind safe APIs,
+/// making the `TargetEnv::process` safety contract much easier to violate.
+#[derive(Debug, PartialEq, Eq)]
 pub struct TargetEnv {
     kind: TargetEnvKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum TargetEnvKind {
     /// Apply entries to the current process environment.
     ///

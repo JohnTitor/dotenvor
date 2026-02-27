@@ -65,7 +65,7 @@ pub unsafe fn from_filename(name: &str) -> Result<LoadReport, Error> {
 ///
 /// `EnvLoader::new()` defaults to [`TargetEnv::memory`], which keeps values in
 /// an in-memory map and avoids process-global mutation by default.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EnvLoader {
     paths: Vec<PathBuf>,
     encoding: Encoding,
