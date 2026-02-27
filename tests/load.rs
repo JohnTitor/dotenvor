@@ -221,6 +221,30 @@ fn malformed_file_returns_parse_error() {
 }
 
 #[test]
+fn process_target_rejects_nul_value_with_typed_error() {
+    let dir = make_temp_dir("process-nul-value");
+    let file = dir.join(".env");
+    std::fs::write(&file, b"A=hello\0world\n").expect("failed to write test file");
+
+    let mut loader = EnvLoader::new()
+        .path(file)
+        .override_existing(true)
+        .target(unsafe { TargetEnv::process() });
+    let err = loader.load().expect_err("expected invalid input error");
+
+    match err {
+        Error::Io(io_err) => {
+            assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(
+                io_err.to_string().contains("contains NUL byte"),
+                "unexpected error: {io_err}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn latin1_encoding_option_decodes_non_utf8_input() {
     let dir = make_temp_dir("latin1-encoding");
     let file = dir.join(".env");

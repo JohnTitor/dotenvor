@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::{Error as IoError, ErrorKind};
 
 /// Destination for loaded environment variables.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,12 +82,33 @@ impl TargetEnv {
         }
     }
 
-    pub(crate) fn set_var(&mut self, key: &str, value: &str) {
+    pub(crate) fn set_var(&mut self, key: &str, value: &str) -> std::io::Result<()> {
         match &mut self.kind {
-            TargetEnvKind::Process => unsafe { std::env::set_var(key, value) },
+            TargetEnvKind::Process => {
+                validate_process_env_pair(key, value)?;
+                unsafe { std::env::set_var(key, value) };
+                Ok(())
+            }
             TargetEnvKind::Memory(map) => {
                 map.insert(key.to_owned(), value.to_owned());
+                Ok(())
             }
         }
     }
+}
+
+fn validate_process_env_pair(key: &str, value: &str) -> std::io::Result<()> {
+    if key.contains('\0') || key.contains('=') {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            format!("invalid environment variable name `{key}`"),
+        ));
+    }
+    if value.contains('\0') {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            format!("environment variable `{key}` value contains NUL byte"),
+        ));
+    }
+    Ok(())
 }

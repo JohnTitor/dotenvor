@@ -209,7 +209,7 @@ impl EnvLoader {
             }
 
             self.log(&format!("setting key {}", entry.key));
-            self.target.set_var(&entry.key, &entry.value);
+            self.target.set_var(&entry.key, &entry.value)?;
             report.loaded += 1;
         }
 
