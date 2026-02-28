@@ -29,12 +29,24 @@ We don't treat MSRV changes as breaking, it may be changed in any release.
 
 ## Quick Start
 
-### Load into the process environment
+### safe load (in-memory)
+
+```rust
+use dotenvor::EnvLoader;
+
+let env = EnvLoader::new().load()?.env;
+println!("DATABASE_URL={:?}", env.get("DATABASE_URL"));
+# Ok::<(), dotenvor::Error>(())
+```
+
+`EnvLoader::load()` is safe and returns an in-memory map.
+Use builder options (`.path(...)`, `.required(false)`, etc.) when needed.
+
+### process-env load (unsafe)
 
 ```rust
 use dotenvor::dotenv;
 
-// Looks for ".env" and searches parent directories if needed.
 let report = unsafe { dotenv()? };
 println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
 # Ok::<(), dotenvor::Error>(())
@@ -42,42 +54,19 @@ println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
 
 `dotenv()` mutates process-wide state via `std::env::set_var` and is `unsafe`,
 because callers must guarantee no concurrent process-environment access.
-In concurrent code or isolated tests, prefer a loader configured with
-`.target(TargetEnv::memory())`.
-
-### Builder API with memory target
-
-```rust
-use dotenvor::{EnvLoader, KeyParsingMode, SubstitutionMode, TargetEnv};
-
-let mut loader = EnvLoader::new()
-    .path(".env")
-    .search_upward(true)
-    .required(false) // skip missing files instead of returning Error::Io
-    .key_parsing_mode(KeyParsingMode::Strict)
-    .substitution_mode(SubstitutionMode::Expand)
-    .override_existing(false)
-    .target(TargetEnv::memory());
-
-let report = loader.load()?;
-let env = loader.target_env().as_memory().expect("memory target");
-
-println!("files_read={}", report.files_read);
-println!("DATABASE_URL={:?}", env.get("DATABASE_URL"));
-# Ok::<(), dotenvor::Error>(())
-```
+In concurrent code or isolated tests, prefer `EnvLoader::load()`.
 
 ### Multi-environment stack convention
 
 ```rust
-use dotenvor::{EnvLoader, TargetEnv};
+use dotenvor::EnvLoader;
 
-let mut loader = EnvLoader::new()
+let loaded = EnvLoader::new()
     .convention("development")
     .required(false)
-    .target(TargetEnv::memory());
+    .load()?;
 
-loader.load()?;
+println!("loaded={}", loaded.report.loaded);
 # Ok::<(), dotenvor::Error>(())
 ```
 
@@ -150,10 +139,9 @@ assert_eq!(entries.len(), 2);
 - Multi-file loading with deterministic precedence
 - Convention helper for environment stacks (`.convention("development")`)
 - `override_existing(false)` by default
-- `EnvLoader` defaults to `TargetEnv::memory()` for process-isolated loads
-- Process-env loading is available via `unsafe { TargetEnv::process() }` and
-  unsafe convenience functions (`dotenv`, `from_path`, `from_paths`,
-  `from_filename`)
+- `EnvLoader::load()` is safe and returns a memory map + report
+- Process-env loading is available via unsafe APIs (`dotenv`, `from_path`,
+  `from_paths`, `from_filename`, `EnvLoader::load_and_modify`)
 - Upward file search support
   - `dotenv()` / `from_filename(...)`: upward search enabled
   - `EnvLoader`: upward search disabled by default (enable with `.search_upward(true)`)

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// A parsed `KEY=VALUE` entry from a `.env` file or input buffer.
@@ -15,6 +16,13 @@ pub struct LoadReport {
     pub loaded: usize,
     pub skipped_existing: usize,
     pub files_read: usize,
+}
+
+/// Result of a safe in-memory load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedEnv {
+    pub report: LoadReport,
+    pub env: BTreeMap<String, String>,
 }
 
 /// Encoding choice for input data.
