@@ -11,7 +11,7 @@ fn bench_load(c: &mut Criterion) {
 
     c.bench_function("load_in_memory", |b| {
         b.iter(|| {
-            let mut loader = EnvLoader::new()
+            let loader = EnvLoader::new()
                 .path(&env_path)
                 .target(TargetEnv::memory())
                 .override_existing(true);

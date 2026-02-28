@@ -16,18 +16,17 @@ fn override_existing_false_skips_existing_values() {
     let mut initial = BTreeMap::new();
     initial.insert("A".to_string(), "existing".to_string());
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(&file)
         .target(TargetEnv::from_memory(initial))
         .override_existing(false);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.files_read, 1);
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 1);
+    assert_eq!(report.report.files_read, 1);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 1);
 
-    let target = loader.target_env();
-    let map = target.as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "existing");
     assert_eq!(map.get("B").expect("B should exist"), "2");
 }
@@ -41,17 +40,16 @@ fn override_existing_true_replaces_values() {
     let mut initial = BTreeMap::new();
     initial.insert("A".to_string(), "existing".to_string());
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(&file)
         .target(TargetEnv::from_memory(initial))
         .override_existing(true);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let target = loader.target_env();
-    let map = target.as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "from_file");
 }
 
@@ -63,17 +61,16 @@ fn multi_file_load_uses_last_file_precedence() {
     write_file(&first, "A=base\nB=base\n");
     write_file(&second, "B=local\nC=local\n");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .paths([first, second])
         .target(TargetEnv::memory());
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.files_read, 2);
-    assert_eq!(report.loaded, 3);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 2);
+    assert_eq!(report.report.loaded, 3);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let target = loader.target_env();
-    let map = target.as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "base");
     assert_eq!(map.get("B").expect("B should exist"), "local");
     assert_eq!(map.get("C").expect("C should exist"), "local");
@@ -93,20 +90,19 @@ fn convention_stack_uses_expected_precedence() {
         "ORDER=development_local\nDEVELOPMENT_LOCAL_ONLY=1\n",
     );
 
-    let (report, target) = with_current_dir(&dir, || {
-        let mut loader = EnvLoader::new()
+    let report = with_current_dir(&dir, || {
+        EnvLoader::new()
             .convention("development")
-            .target(TargetEnv::memory());
-        let report = loader.load().expect("load should succeed");
-        let target = loader.into_target();
-        (report, target)
+            .target(TargetEnv::memory())
+            .load()
+            .expect("load should succeed")
     });
 
-    assert_eq!(report.files_read, 4);
-    assert_eq!(report.loaded, 5);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 4);
+    assert_eq!(report.report.loaded, 5);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = target.as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(
         map.get("ORDER").expect("ORDER should exist"),
         "development_local"
@@ -131,23 +127,20 @@ fn convention_stack_can_skip_missing_files() {
     write_file(&dir.join(".env"), "ORDER=env\n");
     write_file(&dir.join(".env.local"), "ORDER=local\n");
 
-    let (report, target) = with_current_dir(&dir, || {
-        let mut loader = EnvLoader::new()
+    let report = with_current_dir(&dir, || {
+        EnvLoader::new()
             .convention("development")
             .required(false)
-            .target(TargetEnv::memory());
-        let report = loader
+            .target(TargetEnv::memory())
             .load()
-            .expect("missing convention files should be skipped");
-        let target = loader.into_target();
-        (report, target)
+            .expect("missing convention files should be skipped")
     });
 
-    assert_eq!(report.files_read, 2);
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 2);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = target.as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("ORDER").expect("ORDER should exist"), "local");
 }
 
@@ -156,7 +149,7 @@ fn missing_file_returns_io_error() {
     let dir = make_temp_dir("missing");
     let missing = dir.join("missing.env");
 
-    let mut loader = EnvLoader::new().path(missing);
+    let loader = EnvLoader::new().path(missing);
     let err = loader.load().expect_err("expected I/O error");
 
     match err {
@@ -170,17 +163,17 @@ fn missing_file_is_skipped_when_not_required() {
     let dir = make_temp_dir("missing-optional");
     let missing = dir.join("missing.env");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(missing)
         .required(false)
         .target(TargetEnv::memory());
     let report = loader.load().expect("missing file should be skipped");
 
-    assert_eq!(report.files_read, 0);
-    assert_eq!(report.loaded, 0);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 0);
+    assert_eq!(report.report.loaded, 0);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert!(map.is_empty(), "target should remain empty");
 }
 
@@ -191,17 +184,17 @@ fn optional_mode_skips_missing_files_in_multi_file_load() {
     let existing = dir.join("existing.env");
     write_file(&existing, "A=from_file\n");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .paths([missing, existing])
         .required(false)
         .target(TargetEnv::memory());
     let report = loader.load().expect("load should succeed");
 
-    assert_eq!(report.files_read, 1);
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 1);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "from_file");
 }
 
@@ -211,7 +204,7 @@ fn malformed_file_returns_parse_error() {
     let file = dir.join(".env");
     write_file(&file, "A=ok\nBAD LINE\n");
 
-    let mut loader = EnvLoader::new().path(file);
+    let loader = EnvLoader::new().path(file);
     let err = loader.load().expect_err("expected parse error");
 
     match err {
@@ -226,11 +219,8 @@ fn process_target_rejects_nul_value_with_typed_error() {
     let file = dir.join(".env");
     std::fs::write(&file, b"A=hello\0world\n").expect("failed to write test file");
 
-    let mut loader = EnvLoader::new()
-        .path(file)
-        .override_existing(true)
-        .target(unsafe { TargetEnv::process() });
-    let err = loader.load().expect_err("expected invalid input error");
+    let loader = EnvLoader::new().path(file).override_existing(true);
+    let err = unsafe { loader.load_and_modify() }.expect_err("expected invalid input error");
 
     match err {
         Error::Io(io_err) => {
@@ -250,7 +240,7 @@ fn latin1_encoding_option_decodes_non_utf8_input() {
     let file = dir.join(".env");
     std::fs::write(&file, b"LATIN=\xE9\n").expect("failed to write latin1 file");
 
-    let mut default_loader = EnvLoader::new().path(&file).target(TargetEnv::memory());
+    let default_loader = EnvLoader::new().path(&file).target(TargetEnv::memory());
     let err = default_loader
         .load()
         .expect_err("default UTF-8 loader should reject latin1 byte");
@@ -259,7 +249,7 @@ fn latin1_encoding_option_decodes_non_utf8_input() {
         other => panic!("unexpected error: {other:?}"),
     }
 
-    let mut latin1_loader = EnvLoader::new()
+    let latin1_loader = EnvLoader::new()
         .path(&file)
         .encoding(Encoding::Latin1)
         .target(TargetEnv::memory());
@@ -267,14 +257,11 @@ fn latin1_encoding_option_decodes_non_utf8_input() {
     let report = latin1_loader
         .load()
         .expect("latin1 loader should decode successfully");
-    assert_eq!(report.files_read, 1);
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.files_read, 1);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = latin1_loader
-        .target_env()
-        .as_memory()
-        .expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("LATIN").expect("LATIN should exist"), "é");
 }
 
@@ -284,7 +271,7 @@ fn strict_key_mode_rejects_extended_key_names() {
     let file = dir.join(".env");
     write_file(&file, "KEY:ONE=1\n");
 
-    let mut loader = EnvLoader::new().path(file).target(TargetEnv::memory());
+    let loader = EnvLoader::new().path(file).target(TargetEnv::memory());
     let err = loader.load().expect_err("expected parse error");
 
     match err {
@@ -299,17 +286,17 @@ fn permissive_key_mode_loads_extended_keys_and_substitutions() {
     let file = dir.join(".env");
     write_file(&file, "KEY:ONE=one\nKEY:TWO=${KEY:ONE}11\n%TEMP%=/tmp\n");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .key_parsing_mode(KeyParsingMode::Permissive)
         .substitution_mode(SubstitutionMode::Expand);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.loaded, 3);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.loaded, 3);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("KEY:ONE").expect("KEY:ONE should exist"), "one");
     assert_eq!(map.get("KEY:TWO").expect("KEY:TWO should exist"), "one11");
     assert_eq!(map.get("%TEMP%").expect("%TEMP% should exist"), "/tmp");
@@ -321,16 +308,16 @@ fn substitution_expands_chained_and_forward_references() {
     let file = dir.join(".env");
     write_file(&file, "A=$B\nB=${C}\nC=value\n");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .substitution_mode(SubstitutionMode::Expand);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.loaded, 3);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.loaded, 3);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "value");
     assert_eq!(map.get("B").expect("B should exist"), "value");
     assert_eq!(map.get("C").expect("C should exist"), "value");
@@ -345,14 +332,13 @@ fn substitution_uses_target_environment_for_missing_values() {
     let mut initial = BTreeMap::new();
     initial.insert("BASE".to_string(), "/opt/app".to_string());
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::from_memory(initial))
         .substitution_mode(SubstitutionMode::Expand);
 
-    loader.load().expect("load should succeed");
-
-    let map = loader.target_env().as_memory().expect("memory target");
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
     assert_eq!(map.get("OUT").expect("OUT should exist"), "/opt/app/bin");
 }
 
@@ -365,17 +351,17 @@ fn substitution_respects_override_existing_false() {
     let mut initial = BTreeMap::new();
     initial.insert("A".to_string(), "existing".to_string());
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::from_memory(initial))
         .override_existing(false)
         .substitution_mode(SubstitutionMode::Expand);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 1);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 1);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "existing");
     assert_eq!(map.get("B").expect("B should exist"), "existing");
 }
@@ -386,14 +372,13 @@ fn substitution_preserves_unknown_placeholders() {
     let file = dir.join(".env");
     write_file(&file, "A=prefix-${MISSING}-$OTHER-suffix\n");
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .substitution_mode(SubstitutionMode::Expand);
 
-    loader.load().expect("load should succeed");
-
-    let map = loader.target_env().as_memory().expect("memory target");
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
     assert_eq!(
         map.get("A").expect("A should exist"),
         "prefix-${MISSING}-$OTHER-suffix"
@@ -409,17 +394,17 @@ fn substitution_expands_permissive_placeholders_with_punctuation_keys() {
         "KEY:ONE=one\n%TEMP%=/tmp\nOUT_COLON=${KEY:ONE}11\nOUT_PERCENT=${%TEMP%}/cache\n",
     );
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .key_parsing_mode(KeyParsingMode::Permissive)
         .substitution_mode(SubstitutionMode::Expand);
 
     let report = loader.load().expect("load should succeed");
-    assert_eq!(report.loaded, 4);
-    assert_eq!(report.skipped_existing, 0);
+    assert_eq!(report.report.loaded, 4);
+    assert_eq!(report.report.skipped_existing, 0);
 
-    let map = loader.target_env().as_memory().expect("memory target");
+    let map = &report.env;
     assert_eq!(
         map.get("OUT_COLON").expect("OUT_COLON should exist"),
         "one11"
@@ -450,14 +435,13 @@ fn substitution_expands_colon_minus_defaults_in_strict_mode() {
          COMPOSITE=pre-${MISSING:-fallback}-post\n",
     );
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .substitution_mode(SubstitutionMode::Expand);
 
-    loader.load().expect("load should succeed");
-
-    let map = loader.target_env().as_memory().expect("memory target");
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
     assert_eq!(map.get("SET").expect("SET should exist"), "from_file");
     assert_eq!(map.get("EMPTY").expect("EMPTY should exist"), "");
     assert_eq!(
@@ -519,15 +503,14 @@ fn substitution_resolves_modifier_shaped_keys_in_permissive_mode() {
          OUT6=${VAR?err}\n",
     );
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .key_parsing_mode(KeyParsingMode::Permissive)
         .substitution_mode(SubstitutionMode::Expand);
 
-    loader.load().expect("load should succeed");
-
-    let map = loader.target_env().as_memory().expect("memory target");
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
     assert_eq!(map.get("OUT1").expect("OUT1 should exist"), "colon_minus");
     assert_eq!(map.get("OUT2").expect("OUT2 should exist"), "minus");
     assert_eq!(map.get("OUT3").expect("OUT3 should exist"), "colon_plus");
@@ -554,14 +537,13 @@ fn substitution_respects_literal_dollar_in_single_quotes_and_backslash_escapes()
          ESCAPED_SIMPLE=\\$BASE\n",
     );
 
-    let mut loader = EnvLoader::new()
+    let loader = EnvLoader::new()
         .path(file)
         .target(TargetEnv::memory())
         .substitution_mode(SubstitutionMode::Expand);
 
-    loader.load().expect("load should succeed");
-
-    let map = loader.target_env().as_memory().expect("memory target");
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
     assert_eq!(map.get("SINGLE").expect("SINGLE should exist"), "${BASE}");
     assert_eq!(map.get("DOUBLE").expect("DOUBLE should exist"), "from_file");
     assert_eq!(
@@ -593,19 +575,18 @@ fn search_upward_true_finds_parent_file() {
     std::fs::create_dir_all(&child).expect("failed to create child dir");
     write_file(&parent.join(".env"), "A=upward\n");
 
-    let (report, target) = with_current_dir(&child, || {
-        let mut loader = EnvLoader::new()
+    let report = with_current_dir(&child, || {
+        EnvLoader::new()
             .search_upward(true)
-            .target(TargetEnv::memory());
-        let report = loader.load().expect("load should succeed");
-        let target = loader.into_target();
-        (report, target)
+            .target(TargetEnv::memory())
+            .load()
+            .expect("load should succeed")
     });
 
-    assert_eq!(report.files_read, 1);
-    assert_eq!(report.loaded, 1);
-    assert_eq!(report.skipped_existing, 0);
-    let map = target.as_memory().expect("memory target");
+    assert_eq!(report.report.files_read, 1);
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 0);
+    let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "upward");
 }
 
@@ -618,7 +599,7 @@ fn search_upward_false_does_not_walk_parents() {
     write_file(&parent.join(".env"), "A=upward\n");
 
     let err = with_current_dir(&child, || {
-        let mut loader = EnvLoader::new().target(TargetEnv::memory());
+        let loader = EnvLoader::new().target(TargetEnv::memory());
         loader.load().expect_err("expected I/O error")
     });
 
@@ -636,17 +617,18 @@ fn search_upward_false_can_skip_missing_default_file_when_not_required() {
     std::fs::create_dir_all(&child).expect("failed to create child dir");
     write_file(&parent.join(".env"), "A=upward\n");
 
-    let (report, target) = with_current_dir(&child, || {
-        let mut loader = EnvLoader::new().required(false).target(TargetEnv::memory());
-        let report = loader.load().expect("missing file should be skipped");
-        let target = loader.into_target();
-        (report, target)
+    let report = with_current_dir(&child, || {
+        EnvLoader::new()
+            .required(false)
+            .target(TargetEnv::memory())
+            .load()
+            .expect("missing file should be skipped")
     });
 
-    assert_eq!(report.files_read, 0);
-    assert_eq!(report.loaded, 0);
-    assert_eq!(report.skipped_existing, 0);
-    let map = target.as_memory().expect("memory target");
+    assert_eq!(report.report.files_read, 0);
+    assert_eq!(report.report.loaded, 0);
+    assert_eq!(report.report.skipped_existing, 0);
+    let map = &report.env;
     assert!(map.is_empty(), "target should remain empty");
 }
 

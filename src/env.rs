@@ -70,6 +70,13 @@ impl TargetEnv {
         }
     }
 
+    pub fn into_memory(self) -> Option<BTreeMap<String, String>> {
+        match self.kind {
+            TargetEnvKind::Memory(map) => Some(map),
+            TargetEnvKind::Process => None,
+        }
+    }
+
     pub(crate) fn contains_key(&self, key: &str) -> bool {
         match &self.kind {
             TargetEnvKind::Process => std::env::var_os(key).is_some(),

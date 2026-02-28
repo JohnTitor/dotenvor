@@ -1,10 +1,11 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use crate::env::TargetEnv;
 use crate::error::Error;
-use crate::model::{Encoding, Entry, KeyParsingMode, LoadReport, SubstitutionMode};
+use crate::model::{Encoding, Entry, KeyParsingMode, LoadReport, LoadedEnv, SubstitutionMode};
 use crate::parser::parse_str_with_source;
 
 /// Load `.env` from the current working directory into the process environment.
@@ -24,10 +25,7 @@ pub unsafe fn dotenv() -> Result<LoadReport, Error> {
 /// The caller must ensure no other threads concurrently read or write the
 /// process environment while this function runs.
 pub unsafe fn from_path(path: impl AsRef<Path>) -> Result<LoadReport, Error> {
-    let mut loader = EnvLoader::new()
-        .path(path)
-        .target(unsafe { TargetEnv::process() });
-    loader.load()
+    unsafe { EnvLoader::new().path(path).load_and_modify() }
 }
 
 /// Load multiple `.env` files into the process environment.
@@ -41,10 +39,7 @@ where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
 {
-    let mut loader = EnvLoader::new()
-        .paths(paths)
-        .target(unsafe { TargetEnv::process() });
-    loader.load()
+    unsafe { EnvLoader::new().paths(paths).load_and_modify() }
 }
 
 /// Load a dotenv file by filename into the process environment.
@@ -54,11 +49,12 @@ where
 /// The caller must ensure no other threads concurrently read or write the
 /// process environment while this function runs.
 pub unsafe fn from_filename(name: &str) -> Result<LoadReport, Error> {
-    let mut loader = EnvLoader::new()
-        .path(name)
-        .search_upward(true)
-        .target(unsafe { TargetEnv::process() });
-    loader.load()
+    unsafe {
+        EnvLoader::new()
+            .path(name)
+            .search_upward(true)
+            .load_and_modify()
+    }
 }
 
 /// Builder-style dotenv loader.
@@ -193,7 +189,36 @@ impl EnvLoader {
         Ok(entries)
     }
 
-    pub fn load(&mut self) -> Result<LoadReport, Error> {
+    /// Safely load into memory and return the result in one call.
+    pub fn load(mut self) -> Result<LoadedEnv, Error> {
+        if self.target.as_memory().is_none() {
+            return Err(IoError::new(
+                ErrorKind::InvalidInput,
+                "safe EnvLoader::load requires an in-memory target",
+            )
+            .into());
+        }
+
+        let report = self.load_into_target()?;
+        let env = self
+            .target
+            .into_memory()
+            .expect("memory target validated before load");
+        Ok(LoadedEnv { report, env })
+    }
+
+    /// Load into the process environment.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure no other threads concurrently read or write the
+    /// process environment while this function runs.
+    pub unsafe fn load_and_modify(mut self) -> Result<LoadReport, Error> {
+        self.target = unsafe { TargetEnv::process() };
+        self.load_into_target()
+    }
+
+    fn load_into_target(&mut self) -> Result<LoadReport, Error> {
         let (mut entries, files_read) = self.collect_entries(false)?;
         self.apply_substitution(&mut entries);
         let mut report = LoadReport {
