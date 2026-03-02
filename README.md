@@ -56,6 +56,29 @@ println!("loaded={} skipped={}", report.loaded, report.skipped_existing);
 because callers must guarantee no concurrent process-environment access.
 In concurrent code or isolated tests, prefer `EnvLoader::load()`.
 
+### Attribute macro startup load
+
+```rust
+#[dotenvor::load]
+fn main() -> Result<(), dotenvor::Error> {
+    Ok(())
+}
+```
+
+Or, you can specify options:
+
+```rust
+#[dotenvor::load(path = ".env", required = true, override_existing = false, search_upward = false)]
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), dotenvor::Error> {
+    println!("inside async runtime");
+    Ok(())
+}
+```
+
+`#[dotenvor::load]` injects the same process-env loading flow before the function runs.
+The function must return `Result<_, _>`.
+
 ### Multi-environment stack convention
 
 ```rust

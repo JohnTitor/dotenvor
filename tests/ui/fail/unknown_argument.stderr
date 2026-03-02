@@ -1,0 +1,5 @@
+error: unknown attribute argument `unknown`
+ --> tests/ui/fail/unknown_argument.rs:3:8
+  |
+3 | #[load(unknown = true)]
+  |        ^^^^^^^

@@ -1,0 +1,5 @@
+error: duplicate attribute argument `required`
+ --> tests/ui/fail/duplicate_argument.rs:3:26
+  |
+3 | #[load(required = false, required = true)]
+  |                          ^^^^^^^^

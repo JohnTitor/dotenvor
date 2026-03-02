@@ -1,0 +1,5 @@
+error: expected boolean literal
+ --> tests/ui/fail/invalid_literal.rs:3:19
+  |
+3 | #[load(required = "yes")]
+  |                   ^^^^^
