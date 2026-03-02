@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use quote::{format_ident, quote};
 use syn::{
     Attribute, FnArg, Ident, ItemFn, LitBool, LitStr, Pat, ReturnType, Signature, Token, Type,
@@ -94,11 +95,26 @@ pub fn load(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn expand_load(args: LoadArgs, function: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
     ensure_result_return(&function.sig)?;
+    let dotenvor_path = resolve_dotenvor_path()?;
 
     if uses_runtime_entry_wrapper(&function) {
-        expand_runtime_wrapper(args, function)
+        expand_runtime_wrapper(args, function, &dotenvor_path)
     } else {
-        Ok(expand_inline_prologue(args, function))
+        Ok(expand_inline_prologue(args, function, &dotenvor_path))
+    }
+}
+
+fn resolve_dotenvor_path() -> syn::Result<proc_macro2::TokenStream> {
+    match crate_name("dotenvor") {
+        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, proc_macro2::Span::call_site());
+            Ok(quote!(::#ident))
+        }
+        Err(err) => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("failed to resolve `dotenvor` crate name: {err}"),
+        )),
     }
 }
 
@@ -162,7 +178,10 @@ fn is_cfg_attr(attr: &Attribute) -> bool {
     matches!(ident, Some(name) if name == "cfg" || name == "cfg_attr")
 }
 
-fn loader_prologue(args: &LoadArgs) -> proc_macro2::TokenStream {
+fn loader_prologue(
+    args: &LoadArgs,
+    dotenvor_path: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     let path = &args.path;
     let required = args.required;
     let override_existing = args.override_existing;
@@ -170,7 +189,7 @@ fn loader_prologue(args: &LoadArgs) -> proc_macro2::TokenStream {
 
     quote! {
         unsafe {
-            ::dotenvor::EnvLoader::new()
+            #dotenvor_path::EnvLoader::new()
                 .path(#path)
                 .required(#required)
                 .override_existing(#override_existing)
@@ -186,8 +205,12 @@ fn apply_process_env_unsafety(sig: &mut Signature) {
     }
 }
 
-fn expand_inline_prologue(args: LoadArgs, function: ItemFn) -> proc_macro2::TokenStream {
-    let prologue = loader_prologue(&args);
+fn expand_inline_prologue(
+    args: LoadArgs,
+    function: ItemFn,
+    dotenvor_path: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let prologue = loader_prologue(&args, dotenvor_path);
     let attrs = function.attrs;
     let vis = function.vis;
     let mut sig = function.sig;
@@ -206,8 +229,9 @@ fn expand_inline_prologue(args: LoadArgs, function: ItemFn) -> proc_macro2::Toke
 fn expand_runtime_wrapper(
     args: LoadArgs,
     function: ItemFn,
+    dotenvor_path: &proc_macro2::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let prologue = loader_prologue(&args);
+    let prologue = loader_prologue(&args, dotenvor_path);
     let vis = function.vis;
     let sig = function.sig;
     let block = function.block;
