@@ -11,10 +11,19 @@ keywords = ["dotenv", "env", "configuration", "parser", "loader"]
 readme = "README.md"
 description = "Small, fast `.env` parser and loader for Rust"
 
+[workspace]
+members = ["dotenvor-macros"]
+
+[workspace.dependencies]
+dotenvor-macros = { version = "0.1.0", path = "dotenvor-macros" }
+
 [dependencies]
+dotenvor-macros = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.6"
+tokio = { version = "1", features = ["macros", "rt"] }
+trybuild = "1.0"
 
 [[bin]]
 name = "dotenv"
