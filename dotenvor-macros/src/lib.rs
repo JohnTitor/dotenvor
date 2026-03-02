@@ -256,10 +256,13 @@ fn expand_runtime_wrapper(
     inner_sig.ident = inner_name.clone();
 
     let call_args = collect_call_args(&wrapper_sig.inputs)?;
+    let (_, inner_ty_generics, _) = wrapper_sig.generics.split_for_impl();
+    let inner_turbofish = inner_ty_generics.as_turbofish();
+    let inner_invocation = quote!(#inner_name #inner_turbofish (#(#call_args),*));
     let inner_call = if inner_sig.unsafety.is_some() {
-        quote!(unsafe { #inner_name(#(#call_args),*) })
+        quote!(unsafe { #inner_invocation })
     } else {
-        quote!(#inner_name(#(#call_args),*))
+        inner_invocation
     };
 
     Ok(quote! {
