@@ -161,21 +161,18 @@ fn is_runtime_entry_attr(attr: &Attribute) -> bool {
 }
 
 fn is_runtime_entry_path(path: &syn::Path) -> bool {
-    let mut segments = path.segments.iter();
-    let Some(first) = segments.next() else {
+    let mut segments = path.segments.iter().rev();
+    let Some(last) = segments.next() else {
         return false;
     };
-    let Some(second) = segments.next() else {
+    let Some(penultimate) = segments.next() else {
         return false;
     };
-    if segments.next().is_some() {
-        return false;
-    }
 
     matches!(
         (
-            first.ident.to_string().as_str(),
-            second.ident.to_string().as_str()
+            penultimate.ident.to_string().as_str(),
+            last.ident.to_string().as_str()
         ),
         ("tokio", "main") | ("async_std", "main") | ("actix_web", "main")
     )
@@ -391,4 +388,39 @@ fn collect_call_args(
     }
 
     Ok(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cfg_attr_contains_runtime_entry, is_runtime_entry_path};
+    use syn::{Attribute, parse_quote};
+
+    #[test]
+    fn runtime_entry_path_matches_supported_runtimes() {
+        assert!(is_runtime_entry_path(&parse_quote!(tokio::main)));
+        assert!(is_runtime_entry_path(&parse_quote!(async_std::main)));
+        assert!(is_runtime_entry_path(&parse_quote!(actix_web::main)));
+    }
+
+    #[test]
+    fn runtime_entry_path_uses_the_path_suffix() {
+        assert!(is_runtime_entry_path(&parse_quote!(::tokio::main)));
+        assert!(is_runtime_entry_path(&parse_quote!(some::wrapper::tokio::main)));
+        assert!(!is_runtime_entry_path(&parse_quote!(tokio::test)));
+    }
+
+    #[test]
+    fn cfg_attr_detects_list_style_runtime_entries() {
+        let attr: Attribute =
+            parse_quote!(#[cfg_attr(all(), tokio::main(flavor = "current_thread"))]);
+        assert!(cfg_attr_contains_runtime_entry(&attr));
+    }
+
+    #[test]
+    fn cfg_attr_detects_nested_runtime_entries() {
+        let attr: Attribute = parse_quote!(
+            #[cfg_attr(all(), cfg_attr(all(), tokio::main(flavor = "current_thread")))]
+        );
+        assert!(cfg_attr_contains_runtime_entry(&attr));
+    }
 }
