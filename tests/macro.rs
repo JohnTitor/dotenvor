@@ -34,6 +34,11 @@ fn load_with_search_upward() -> Result<(), Error> {
 }
 
 #[load(path = "tests/fixtures/macro-async.env", override_existing = true)]
+async fn load_plain_async() -> Result<(), Error> {
+    Ok(())
+}
+
+#[load(path = "tests/fixtures/macro-async.env", override_existing = true)]
 #[tokio::main(flavor = "current_thread")]
 async fn load_before_tokio_runtime() -> Result<(), Error> {
     Ok(())
@@ -46,6 +51,12 @@ where
     T: Default,
 {
     let _ = T::default();
+    Ok(())
+}
+
+#[load(path = "tests/fixtures/macro-async.env", override_existing = true)]
+#[cfg_attr(all(), tokio::main(flavor = "current_thread"))]
+async fn load_before_tokio_runtime_cfg_attr() -> Result<(), Error> {
     Ok(())
 }
 
@@ -125,6 +136,31 @@ fn load_attribute_search_upward_finds_parent_file() {
 }
 
 #[test]
+fn load_attribute_plain_async_runs_before_future_is_polled() {
+    let _guard = env_lock().lock().expect("env lock poisoned");
+
+    unsafe {
+        std::env::remove_var("DOTENVOR_MACRO_ASYNC");
+    }
+
+    let future = unsafe { load_plain_async() };
+    assert_eq!(
+        std::env::var("DOTENVOR_MACRO_ASYNC").expect("env var should be set"),
+        "from_async_file"
+    );
+
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime should build")
+        .block_on(future)
+        .expect("macro-wrapped async fn should succeed");
+
+    unsafe {
+        std::env::remove_var("DOTENVOR_MACRO_ASYNC");
+    }
+}
+
+#[test]
 fn load_attribute_runs_before_tokio_runtime_entry() {
     let _guard = env_lock().lock().expect("env lock poisoned");
 
@@ -133,6 +169,26 @@ fn load_attribute_runs_before_tokio_runtime_entry() {
     }
 
     unsafe { load_before_tokio_runtime() }.expect("macro-wrapped tokio entry should succeed");
+    assert_eq!(
+        std::env::var("DOTENVOR_MACRO_ASYNC").expect("env var should be set"),
+        "from_async_file"
+    );
+
+    unsafe {
+        std::env::remove_var("DOTENVOR_MACRO_ASYNC");
+    }
+}
+
+#[test]
+fn load_attribute_runs_before_cfg_attr_tokio_runtime_entry() {
+    let _guard = env_lock().lock().expect("env lock poisoned");
+
+    unsafe {
+        std::env::remove_var("DOTENVOR_MACRO_ASYNC");
+    }
+
+    unsafe { load_before_tokio_runtime_cfg_attr() }
+        .expect("macro-wrapped cfg_attr tokio entry should succeed");
     assert_eq!(
         std::env::var("DOTENVOR_MACRO_ASYNC").expect("env var should be set"),
         "from_async_file"

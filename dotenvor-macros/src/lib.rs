@@ -2,8 +2,10 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, FnArg, Ident, ItemFn, LitBool, LitStr, Pat, ReturnType, Signature, Token, Type,
-    parse::{Parse, ParseStream},
+    Attribute, FnArg, Ident, ItemFn, LitBool, LitStr, Meta, Pat, ReturnType, Signature, Token,
+    Type,
+    parse::{Parse, ParseStream, Parser},
+    parse_quote,
     parse_macro_input,
     punctuated::Punctuated,
 };
@@ -99,6 +101,8 @@ fn expand_load(args: LoadArgs, function: ItemFn) -> syn::Result<proc_macro2::Tok
 
     if uses_runtime_entry_wrapper(&function) {
         expand_runtime_wrapper(args, function, &dotenvor_path)
+    } else if function.sig.asyncness.is_some() {
+        Ok(expand_async_wrapper(args, function, &dotenvor_path))
     } else {
         Ok(expand_inline_prologue(args, function, &dotenvor_path))
     }
@@ -153,7 +157,11 @@ fn uses_runtime_entry_wrapper(function: &ItemFn) -> bool {
 }
 
 fn is_runtime_entry_attr(attr: &Attribute) -> bool {
-    let mut segments = attr.path().segments.iter();
+    is_runtime_entry_path(attr.path()) || cfg_attr_contains_runtime_entry(attr)
+}
+
+fn is_runtime_entry_path(path: &syn::Path) -> bool {
+    let mut segments = path.segments.iter();
     let Some(first) = segments.next() else {
         return false;
     };
@@ -173,12 +181,49 @@ fn is_runtime_entry_attr(attr: &Attribute) -> bool {
     )
 }
 
+fn cfg_attr_contains_runtime_entry(attr: &Attribute) -> bool {
+    if !attr.path().is_ident("cfg_attr") {
+        return false;
+    }
+
+    parse_cfg_attr_args(attr)
+        .map(|args| args.iter().skip(1).any(meta_contains_runtime_entry))
+        .unwrap_or(false)
+}
+
+fn parse_cfg_attr_args(
+    attr: &Attribute,
+) -> syn::Result<Punctuated<Meta, Token![,]>> {
+    attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+}
+
+fn meta_contains_runtime_entry(meta: &Meta) -> bool {
+    match meta {
+        Meta::Path(path) => is_runtime_entry_path(path),
+        Meta::List(list) => {
+            if is_runtime_entry_path(&list.path) {
+                return true;
+            }
+
+            if !list.path.is_ident("cfg_attr") {
+                return false;
+            }
+
+            Punctuated::<Meta, Token![,]>::parse_terminated
+                .parse2(list.tokens.clone())
+                .map(|args| args.iter().skip(1).any(meta_contains_runtime_entry))
+                .unwrap_or(false)
+        }
+        Meta::NameValue(value) => is_runtime_entry_path(&value.path),
+    }
+}
+
 fn is_cfg_attr(attr: &Attribute) -> bool {
     let ident = attr.path().get_ident();
     matches!(ident, Some(name) if name == "cfg" || name == "cfg_attr")
 }
 
-fn loader_prologue(
+fn loader_invocation(
     args: &LoadArgs,
     dotenvor_path: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
@@ -195,13 +240,31 @@ fn loader_prologue(
                 .override_existing(#override_existing)
                 .search_upward(#search_upward)
                 .load_and_modify()
-        }?;
+        }
+    }
+}
+
+fn loader_prologue(
+    args: &LoadArgs,
+    dotenvor_path: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let invocation = loader_invocation(args, dotenvor_path);
+
+    quote! {
+        #invocation?;
     }
 }
 
 fn apply_process_env_unsafety(sig: &mut Signature) {
     if sig.ident != "main" && sig.unsafety.is_none() {
         sig.unsafety = Some(Token![unsafe](proc_macro2::Span::call_site()));
+    }
+}
+
+fn result_return_type(sig: &Signature) -> Type {
+    match &sig.output {
+        ReturnType::Type(_, ty) => ty.as_ref().clone(),
+        ReturnType::Default => unreachable!("load macro validated Result return type"),
     }
 }
 
@@ -222,6 +285,34 @@ fn expand_inline_prologue(
         #vis #sig {
             #prologue
             #(#stmts)*
+        }
+    }
+}
+
+fn expand_async_wrapper(
+    args: LoadArgs,
+    function: ItemFn,
+    dotenvor_path: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let load = loader_invocation(&args, dotenvor_path);
+    let attrs = function.attrs;
+    let vis = function.vis;
+    let mut sig = function.sig;
+    let output = result_return_type(&sig);
+    apply_process_env_unsafety(&mut sig);
+    sig.asyncness = None;
+    sig.output = parse_quote!(-> impl ::core::future::Future<Output = #output>);
+    let block = function.block;
+
+    quote! {
+        #(#attrs)*
+        #vis #sig {
+            let __dotenvor_load_result = #load;
+
+            async move {
+                __dotenvor_load_result?;
+                #block
+            }
         }
     }
 }
