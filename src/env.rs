@@ -80,7 +80,7 @@ impl TargetEnv {
     pub(crate) fn contains_key(&self, key: &str) -> bool {
         match &self.kind {
             TargetEnvKind::Process => std::env::var_os(key).is_some(),
-            TargetEnvKind::Memory(map) => map.contains_key(key),
+            TargetEnvKind::Memory(map) => memory_entry(map, key).is_some(),
         }
     }
 
@@ -96,7 +96,9 @@ impl TargetEnv {
                     ),
                 )),
             },
-            TargetEnvKind::Memory(map) => Ok(map.get(key).cloned()),
+            TargetEnvKind::Memory(map) => {
+                Ok(memory_entry(map, key).map(|(_, value)| value.clone()))
+            }
         }
     }
 
@@ -108,11 +110,37 @@ impl TargetEnv {
                 Ok(())
             }
             TargetEnvKind::Memory(map) => {
+                if let Some(existing_key) =
+                    memory_entry(map, key).map(|(existing_key, _)| existing_key.clone())
+                {
+                    map.remove(&existing_key);
+                }
                 map.insert(key.to_owned(), value.to_owned());
                 Ok(())
             }
         }
     }
+}
+
+pub(crate) fn comparable_env_key(key: &str) -> String {
+    #[cfg(windows)]
+    {
+        key.to_uppercase()
+    }
+
+    #[cfg(not(windows))]
+    {
+        key.to_owned()
+    }
+}
+
+fn memory_entry<'a>(
+    map: &'a BTreeMap<String, String>,
+    key: &str,
+) -> Option<(&'a String, &'a String)> {
+    let comparable_key = comparable_env_key(key);
+    map.iter()
+        .find(|(existing_key, _)| comparable_env_key(existing_key) == comparable_key)
 }
 
 fn validate_process_env_pair(key: &str, value: &str) -> std::io::Result<()> {

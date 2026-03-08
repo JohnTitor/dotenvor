@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use crate::env::TargetEnv;
+use crate::env::{TargetEnv, comparable_env_key};
 use crate::error::Error;
 use crate::model::{Encoding, Entry, KeyParsingMode, LoadReport, LoadedEnv, SubstitutionMode};
 use crate::parser::parse_str_with_source;
@@ -268,10 +268,11 @@ impl EnvLoader {
             by_key.reserve(parsed.len());
 
             for entry in parsed {
-                if let Some(existing_idx) = by_key.get(&entry.key).copied() {
+                let comparable_key = comparable_env_key(&entry.key);
+                if let Some(existing_idx) = by_key.get(&comparable_key).copied() {
                     merged_entries[existing_idx] = entry;
                 } else {
-                    by_key.insert(entry.key.clone(), merged_entries.len());
+                    by_key.insert(comparable_key, merged_entries.len());
                     merged_entries.push(entry);
                 }
             }
@@ -444,7 +445,7 @@ impl<'a> SubstitutionResolver<'a> {
     ) -> Self {
         let raw_values = entries
             .iter()
-            .map(|entry| (entry.key.clone(), entry.value.clone()))
+            .map(|entry| (comparable_env_key(&entry.key), entry.value.clone()))
             .collect();
 
         Self {
@@ -461,22 +462,24 @@ impl<'a> SubstitutionResolver<'a> {
     }
 
     fn resolve_key(&mut self, key: &str, stack: &mut Vec<String>) -> Result<String, Error> {
-        if let Some(existing) = self.resolved_values.get(key) {
+        let comparable_key = comparable_env_key(key);
+
+        if let Some(existing) = self.resolved_values.get(&comparable_key) {
             return Ok(existing.clone());
         }
 
         if !self.override_existing && self.target.contains_key(key) {
             let existing = self.target.get_var(key)?.unwrap_or_default();
             self.resolved_values
-                .insert(key.to_owned(), existing.clone());
+                .insert(comparable_key, existing.clone());
             return Ok(existing);
         }
 
-        let Some(raw_value) = self.raw_values.get(key).cloned() else {
+        let Some(raw_value) = self.raw_values.get(&comparable_key).cloned() else {
             return Ok(self.target.get_var(key)?.unwrap_or_default());
         };
 
-        stack.push(key.to_owned());
+        stack.push(comparable_env_key(key));
         let expanded =
             expand_template(&raw_value, self.key_parsing_mode, |name, token, default| {
                 self.resolve_placeholder(name, token, default, stack)
@@ -484,7 +487,7 @@ impl<'a> SubstitutionResolver<'a> {
         stack.pop();
 
         self.resolved_values
-            .insert(key.to_owned(), expanded.clone());
+            .insert(comparable_key, expanded.clone());
         Ok(expanded)
     }
 
@@ -495,11 +498,12 @@ impl<'a> SubstitutionResolver<'a> {
         default: Option<&str>,
         stack: &mut Vec<String>,
     ) -> Result<String, Error> {
-        if stack.iter().any(|item| item == name) {
+        let comparable_name = comparable_env_key(name);
+        if stack.iter().any(|item| item == &comparable_name) {
             return Ok(default.unwrap_or(token).to_owned());
         }
 
-        let resolved = if self.raw_values.contains_key(name) {
+        let resolved = if self.raw_values.contains_key(&comparable_name) {
             Some(self.resolve_key(name, stack)?)
         } else {
             self.target.get_var(name)?

@@ -80,6 +80,29 @@ fn multi_file_load_uses_last_file_precedence() {
     assert_eq!(map.get("C").expect("C should exist"), "local");
 }
 
+#[cfg(windows)]
+#[test]
+fn multi_file_load_matches_windows_case_insensitive_precedence() {
+    let dir = make_temp_dir("precedence-windows-case");
+    let first = dir.join(".env.base");
+    let second = dir.join(".env.local");
+    write_file(&first, "Path=base\n");
+    write_file(&second, "PATH=local\n");
+
+    let loader = EnvLoader::new()
+        .paths([first, second])
+        .target(TargetEnv::memory());
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.report.files_read, 2);
+    assert_eq!(report.report.loaded, 1);
+
+    let map = &report.env;
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("PATH").expect("PATH should exist"), "local");
+    assert!(!map.contains_key("Path"), "older casing should be replaced");
+}
+
 #[test]
 fn convention_stack_uses_expected_precedence() {
     let dir = make_temp_dir("convention-precedence");
@@ -327,6 +350,24 @@ fn substitution_expands_chained_and_forward_references() {
     assert_eq!(map.get("C").expect("C should exist"), "value");
 }
 
+#[cfg(windows)]
+#[test]
+fn substitution_matches_windows_case_insensitive_entry_lookups() {
+    let dir = make_temp_dir("substitution-windows-case");
+    let file = dir.join(".env");
+    write_file(&file, "Path=/opt/app\nOUT=${PATH}/bin\n");
+
+    let loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::memory())
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    let map = &report.env;
+    assert_eq!(map.get("Path").expect("Path should exist"), "/opt/app");
+    assert_eq!(map.get("OUT").expect("OUT should exist"), "/opt/app/bin");
+}
+
 #[test]
 fn substitution_uses_target_environment_for_missing_values() {
     let dir = make_temp_dir("substitution-target-fallback");
@@ -403,6 +444,33 @@ fn substitution_respects_override_existing_false() {
     let map = &report.env;
     assert_eq!(map.get("A").expect("A should exist"), "existing");
     assert_eq!(map.get("B").expect("B should exist"), "existing");
+}
+
+#[cfg(windows)]
+#[test]
+fn substitution_respects_override_existing_false_case_insensitively_on_windows() {
+    let dir = make_temp_dir("substitution-override-windows-case");
+    let file = dir.join(".env");
+    write_file(&file, "PATH=file\nOUT=${Path}/bin\n");
+
+    let mut initial = BTreeMap::new();
+    initial.insert("Path".to_string(), "existing".to_string());
+
+    let loader = EnvLoader::new()
+        .path(file)
+        .target(TargetEnv::from_memory(initial))
+        .override_existing(false)
+        .substitution_mode(SubstitutionMode::Expand);
+
+    let report = loader.load().expect("load should succeed");
+    assert_eq!(report.report.loaded, 1);
+    assert_eq!(report.report.skipped_existing, 1);
+
+    let map = &report.env;
+    assert_eq!(map.len(), 2);
+    assert_eq!(map.get("Path").expect("Path should exist"), "existing");
+    assert_eq!(map.get("OUT").expect("OUT should exist"), "existing/bin");
+    assert!(!map.contains_key("PATH"), "file entry should be skipped");
 }
 
 #[test]
