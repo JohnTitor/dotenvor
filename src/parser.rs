@@ -323,19 +323,21 @@ fn parse_double_quoted(
 
     for (idx, ch) in input.char_indices().skip(1) {
         if escaped {
-            let unescaped = match ch {
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                '\\' => '\\',
-                '"' => '"',
+            match ch {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
                 '$' if preserve_literal_dollar_escapes => {
                     out.push('\\');
-                    '$'
+                    out.push('$');
                 }
-                _ => ch,
-            };
-            out.push(unescaped);
+                _ => {
+                    out.push('\\');
+                    out.push(ch);
+                }
+            }
             escaped = false;
             continue;
         }
@@ -525,6 +527,18 @@ mod tests {
         assert_eq!(parsed[0].value, "C:\\Users\\");
         assert_eq!(parsed[1].key, "NEXT");
         assert_eq!(parsed[1].value, "ok");
+    }
+
+    #[test]
+    fn preserves_unknown_escapes_in_double_quoted_values() {
+        let input = "FILTER=\"\\\\d+\"\nPATH=\"C:\\Temp\"\n";
+        let parsed = parse_str(input).expect("parse should succeed");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "FILTER");
+        assert_eq!(parsed[0].value, "\\d+");
+        assert_eq!(parsed[1].key, "PATH");
+        assert_eq!(parsed[1].value, "C:\\Temp");
     }
 
     #[test]
