@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -31,7 +31,7 @@ Usage:
   dotenv run [OPTIONS] COMMAND [ARGS...]
 
 Options:
-  -f, --file <PATHS>      Dotenv file path(s). Repeat or pass comma-separated paths.
+  -f, --file <PATH>       Dotenv file path. Repeat to load multiple files.
                           Defaults to .env.
   -i, --ignore            Ignore missing dotenv files.
       --ignore-missing    Alias for --ignore.
@@ -135,6 +135,12 @@ fn parse_run_options(args: Vec<OsString>) -> Result<RunCommand, String> {
     let mut options = RunOptions::default();
     let mut index = 0usize;
     while index < args.len() {
+        if let Some(value) = split_long_option_value(&args[index], "--file=") {
+            parse_file_value(&value, &mut options.files)?;
+            index += 1;
+            continue;
+        }
+
         let token = args[index].to_string_lossy();
         match token.as_ref() {
             "--" => {
@@ -147,11 +153,7 @@ fn parse_run_options(args: Vec<OsString>) -> Result<RunCommand, String> {
                 let Some(value) = args.get(index) else {
                     return Err("missing value for `-f/--file`".to_owned());
                 };
-                parse_file_values(value, &mut options.files)?;
-                index += 1;
-            }
-            value if value.starts_with("--file=") => {
-                parse_file_text(&value["--file=".len()..], &mut options.files)?;
+                parse_file_value(value, &mut options.files)?;
                 index += 1;
             }
             "-i" | "--ignore" | "--ignore-missing" => {
@@ -203,23 +205,26 @@ fn parse_run_options(args: Vec<OsString>) -> Result<RunCommand, String> {
     Ok(RunCommand::Execute(options))
 }
 
-fn parse_file_values(raw: &OsString, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    parse_file_text(&raw.to_string_lossy(), files)
+fn split_long_option_value(raw: &OsString, prefix: &str) -> Option<OsString> {
+    let raw_bytes = raw.as_encoded_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    if !raw_bytes.starts_with(prefix_bytes) {
+        return None;
+    }
+
+    // SAFETY: `raw_bytes` came from `raw`, and `prefix` is ASCII, so the slice
+    // starts at a valid boundary in Rust's platform string encoding.
+    Some(unsafe {
+        OsString::from_encoded_bytes_unchecked(raw_bytes[prefix_bytes.len()..].to_vec())
+    })
 }
 
-fn parse_file_text(raw: &str, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let mut added = 0usize;
-    for segment in raw.split(',') {
-        let trimmed = segment.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        files.push(PathBuf::from(trimmed));
-        added += 1;
+fn parse_file_value(raw: &OsStr, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if raw.as_encoded_bytes().is_empty() {
+        return Err("`-f/--file` requires a path".to_owned());
     }
-    if added == 0 {
-        return Err("`-f/--file` requires at least one path".to_owned());
-    }
+
+    files.push(PathBuf::from(raw));
     Ok(())
 }
 
@@ -343,12 +348,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_run_supports_repeated_and_comma_separated_files() {
+    fn parse_run_supports_repeated_files() {
         let parsed = parse_run_options(vec![
             OsString::from("-f"),
-            OsString::from(".env.local,.env"),
+            OsString::from(".env.local"),
             OsString::from("--file"),
             OsString::from("custom.env"),
+            OsString::from("--file=inline.env"),
             OsString::from("--"),
             OsString::from("printenv"),
             OsString::from("FOO"),
@@ -362,8 +368,8 @@ mod tests {
             options.files,
             vec![
                 PathBuf::from(".env.local"),
-                PathBuf::from(".env"),
                 PathBuf::from("custom.env"),
+                PathBuf::from("inline.env"),
             ]
         );
     }
@@ -375,15 +381,60 @@ mod tests {
     }
 
     #[test]
-    fn parse_run_rejects_empty_file_list() {
+    fn parse_run_rejects_empty_file_path() {
         let err = parse_run_options(vec![
             OsString::from("-f"),
-            OsString::from(","),
+            OsString::from(""),
             OsString::from("printenv"),
             OsString::from("FOO"),
         ])
         .expect_err("parse should fail");
-        assert_eq!(err, "`-f/--file` requires at least one path");
+        assert_eq!(err, "`-f/--file` requires a path");
+    }
+
+    #[test]
+    fn parse_run_preserves_commas_in_file_paths() {
+        let parsed = parse_run_options(vec![
+            OsString::from("--file=env,local"),
+            OsString::from("printenv"),
+            OsString::from("FOO"),
+        ])
+        .expect("parse should succeed");
+        let RunCommand::Execute(options) = parsed else {
+            panic!("expected execute");
+        };
+
+        assert_eq!(options.files, vec![PathBuf::from("env,local")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_run_preserves_non_utf8_file_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let direct = OsString::from_vec(vec![0xFF, b'.', b'e', b'n', b'v']);
+        let mut inline = b"--file=".to_vec();
+        inline.extend_from_slice(&[0xFE, b'.', b'e', b'n', b'v']);
+
+        let parsed = parse_run_options(vec![
+            OsString::from("-f"),
+            direct.clone(),
+            OsString::from_vec(inline),
+            OsString::from("printenv"),
+            OsString::from("FOO"),
+        ])
+        .expect("parse should succeed");
+        let RunCommand::Execute(options) = parsed else {
+            panic!("expected execute");
+        };
+
+        assert_eq!(
+            options.files,
+            vec![
+                PathBuf::from(direct),
+                PathBuf::from(OsString::from_vec(vec![0xFE, b'.', b'e', b'n', b'v'])),
+            ]
+        );
     }
 
     #[test]
