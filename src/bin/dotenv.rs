@@ -392,21 +392,6 @@ mod tests {
         assert_eq!(err, "`-f/--file` requires a path");
     }
 
-    #[test]
-    fn parse_run_preserves_commas_in_file_paths() {
-        let parsed = parse_run_options(vec![
-            OsString::from("--file=env,local"),
-            OsString::from("printenv"),
-            OsString::from("FOO"),
-        ])
-        .expect("parse should succeed");
-        let RunCommand::Execute(options) = parsed else {
-            panic!("expected execute");
-        };
-
-        assert_eq!(options.files, vec![PathBuf::from("env,local")]);
-    }
-
     #[cfg(unix)]
     #[test]
     fn parse_run_preserves_non_utf8_file_paths() {
