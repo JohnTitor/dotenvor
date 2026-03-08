@@ -84,12 +84,19 @@ impl TargetEnv {
         }
     }
 
-    pub(crate) fn get_var(&self, key: &str) -> Option<String> {
+    pub(crate) fn get_var(&self, key: &str) -> std::io::Result<Option<String>> {
         match &self.kind {
-            TargetEnvKind::Process => {
-                std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
-            }
-            TargetEnvKind::Memory(map) => map.get(key).cloned(),
+            TargetEnvKind::Process => match std::env::var(key) {
+                Ok(value) => Ok(Some(value)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(std::env::VarError::NotUnicode(_)) => Err(IoError::new(
+                    ErrorKind::InvalidData,
+                    format!(
+                        "process environment variable `{key}` value is not valid UTF-8; variable expansion requires UTF-8 environment data"
+                    ),
+                )),
+            },
+            TargetEnvKind::Memory(map) => Ok(map.get(key).cloned()),
         }
     }
 

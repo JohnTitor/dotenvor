@@ -180,7 +180,7 @@ impl EnvLoader {
 
     pub fn parse_only(&self) -> Result<Vec<Entry>, Error> {
         let (mut entries, _) = self.collect_entries(true)?;
-        self.apply_substitution(&mut entries);
+        self.apply_substitution(&mut entries)?;
         self.log(&format!(
             "parsed {} entr{}",
             entries.len(),
@@ -220,7 +220,7 @@ impl EnvLoader {
 
     fn load_into_target(&mut self) -> Result<LoadReport, Error> {
         let (mut entries, files_read) = self.collect_entries(false)?;
-        self.apply_substitution(&mut entries);
+        self.apply_substitution(&mut entries)?;
         let mut report = LoadReport {
             files_read,
             ..LoadReport::default()
@@ -301,9 +301,9 @@ impl EnvLoader {
         Ok(Some(parsed))
     }
 
-    fn apply_substitution(&self, entries: &mut [Entry]) {
+    fn apply_substitution(&self, entries: &mut [Entry]) -> Result<(), Error> {
         if self.substitution_mode == SubstitutionMode::Disabled {
-            return;
+            return Ok(());
         }
 
         let mut resolver = SubstitutionResolver::new(
@@ -313,8 +313,10 @@ impl EnvLoader {
             self.key_parsing_mode,
         );
         for entry in entries.iter_mut() {
-            entry.value = resolver.resolve_entry(&entry.key);
+            entry.value = resolver.resolve_entry(&entry.key)?;
         }
+
+        Ok(())
     }
 
     fn effective_paths(&self) -> Result<Vec<PathBuf>, Error> {
@@ -454,36 +456,36 @@ impl<'a> SubstitutionResolver<'a> {
         }
     }
 
-    fn resolve_entry(&mut self, key: &str) -> String {
+    fn resolve_entry(&mut self, key: &str) -> Result<String, Error> {
         self.resolve_key(key, &mut Vec::new())
     }
 
-    fn resolve_key(&mut self, key: &str, stack: &mut Vec<String>) -> String {
+    fn resolve_key(&mut self, key: &str, stack: &mut Vec<String>) -> Result<String, Error> {
         if let Some(existing) = self.resolved_values.get(key) {
-            return existing.clone();
+            return Ok(existing.clone());
         }
 
         if !self.override_existing && self.target.contains_key(key) {
-            let existing = self.target.get_var(key).unwrap_or_default();
+            let existing = self.target.get_var(key)?.unwrap_or_default();
             self.resolved_values
                 .insert(key.to_owned(), existing.clone());
-            return existing;
+            return Ok(existing);
         }
 
         let Some(raw_value) = self.raw_values.get(key).cloned() else {
-            return self.target.get_var(key).unwrap_or_default();
+            return Ok(self.target.get_var(key)?.unwrap_or_default());
         };
 
         stack.push(key.to_owned());
         let expanded =
             expand_template(&raw_value, self.key_parsing_mode, |name, token, default| {
                 self.resolve_placeholder(name, token, default, stack)
-            });
+            })?;
         stack.pop();
 
         self.resolved_values
             .insert(key.to_owned(), expanded.clone());
-        expanded
+        Ok(expanded)
     }
 
     fn resolve_placeholder(
@@ -492,31 +494,35 @@ impl<'a> SubstitutionResolver<'a> {
         token: &str,
         default: Option<&str>,
         stack: &mut Vec<String>,
-    ) -> String {
+    ) -> Result<String, Error> {
         if stack.iter().any(|item| item == name) {
-            return default.unwrap_or(token).to_owned();
+            return Ok(default.unwrap_or(token).to_owned());
         }
 
         let resolved = if self.raw_values.contains_key(name) {
-            Some(self.resolve_key(name, stack))
+            Some(self.resolve_key(name, stack)?)
         } else {
-            self.target.get_var(name)
+            self.target.get_var(name)?
         };
 
         if let Some(value) = resolved {
             if default.is_some() && value.is_empty() {
-                return default.unwrap_or_default().to_owned();
+                return Ok(default.unwrap_or_default().to_owned());
             }
-            return value;
+            return Ok(value);
         }
 
-        default.unwrap_or(token).to_owned()
+        Ok(default.unwrap_or(token).to_owned())
     }
 }
 
-fn expand_template<F>(input: &str, key_parsing_mode: KeyParsingMode, mut resolve: F) -> String
+fn expand_template<F>(
+    input: &str,
+    key_parsing_mode: KeyParsingMode,
+    mut resolve: F,
+) -> Result<String, Error>
 where
-    F: FnMut(&str, &str, Option<&str>) -> String,
+    F: FnMut(&str, &str, Option<&str>) -> Result<String, Error>,
 {
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0usize;
@@ -547,14 +553,14 @@ where
         let default = placeholder.default.map(|(start, end)| &input[start..end]);
 
         out.push_str(&input[cursor..idx]);
-        out.push_str(&resolve(name, token, default));
+        out.push_str(&resolve(name, token, default)?);
 
         cursor = placeholder.token_end;
         idx = placeholder.token_end;
     }
 
     out.push_str(&input[cursor..]);
-    out
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

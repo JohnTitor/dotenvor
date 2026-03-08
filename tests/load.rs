@@ -1,4 +1,8 @@
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -340,6 +344,41 @@ fn substitution_uses_target_environment_for_missing_values() {
     let report = loader.load().expect("load should succeed");
     let map = &report.env;
     assert_eq!(map.get("OUT").expect("OUT should exist"), "/opt/app/bin");
+}
+
+#[cfg(unix)]
+#[test]
+fn substitution_against_process_target_rejects_non_utf8_inherited_values() {
+    let dir = make_temp_dir("substitution-process-non-utf8");
+    let file = dir.join(".env");
+    let key = "DOTENVOR_LOAD_PARENT_NON_UTF8";
+    write_file(&file, &format!("OUT=${{{key}}}/bin\n"));
+
+    unsafe { std::env::set_var(key, OsString::from_vec(vec![0x66, 0x80, 0x67])) };
+
+    let loader = EnvLoader::new()
+        .path(file)
+        .override_existing(true)
+        .substitution_mode(SubstitutionMode::Expand);
+    let err = unsafe { loader.load_and_modify() }.expect_err("expected UTF-8 validation error");
+
+    unsafe { std::env::remove_var(key) };
+
+    match err {
+        Error::Io(io_err) => {
+            assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+            let message = io_err.to_string();
+            assert!(
+                message.contains(key),
+                "expected offending key in error message: {message:?}"
+            );
+            assert!(
+                message.contains("not valid UTF-8"),
+                "expected UTF-8 validation error: {message:?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

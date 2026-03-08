@@ -5,8 +5,7 @@ use syn::{
     Attribute, FnArg, Ident, ItemFn, LitBool, LitStr, Meta, Pat, ReturnType, Signature, Token,
     Type,
     parse::{Parse, ParseStream, Parser},
-    parse_quote,
-    parse_macro_input,
+    parse_macro_input, parse_quote,
     punctuated::Punctuated,
 };
 
@@ -188,9 +187,7 @@ fn cfg_attr_contains_runtime_entry(attr: &Attribute) -> bool {
         .unwrap_or(false)
 }
 
-fn parse_cfg_attr_args(
-    attr: &Attribute,
-) -> syn::Result<Punctuated<Meta, Token![,]>> {
+fn parse_cfg_attr_args(attr: &Attribute) -> syn::Result<Punctuated<Meta, Token![,]>> {
     attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
 }
 
@@ -405,7 +402,9 @@ mod tests {
     #[test]
     fn runtime_entry_path_uses_the_path_suffix() {
         assert!(is_runtime_entry_path(&parse_quote!(::tokio::main)));
-        assert!(is_runtime_entry_path(&parse_quote!(some::wrapper::tokio::main)));
+        assert!(is_runtime_entry_path(&parse_quote!(
+            some::wrapper::tokio::main
+        )));
         assert!(!is_runtime_entry_path(&parse_quote!(tokio::test)));
     }
 
