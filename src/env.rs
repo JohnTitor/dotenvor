@@ -80,7 +80,7 @@ impl TargetEnv {
     pub(crate) fn contains_key(&self, key: &str) -> bool {
         match &self.kind {
             TargetEnvKind::Process => std::env::var_os(key).is_some(),
-            TargetEnvKind::Memory(map) => memory_entry(map, key).is_some(),
+            TargetEnvKind::Memory(map) => memory_contains_key(map, key),
         }
     }
 
@@ -96,9 +96,7 @@ impl TargetEnv {
                     ),
                 )),
             },
-            TargetEnvKind::Memory(map) => {
-                Ok(memory_entry(map, key).map(|(_, value)| value.clone()))
-            }
+            TargetEnvKind::Memory(map) => Ok(memory_get(map, key).cloned()),
         }
     }
 
@@ -110,12 +108,7 @@ impl TargetEnv {
                 Ok(())
             }
             TargetEnvKind::Memory(map) => {
-                if let Some(existing_key) =
-                    memory_entry(map, key).map(|(existing_key, _)| existing_key.clone())
-                {
-                    map.remove(&existing_key);
-                }
-                map.insert(key.to_owned(), value.to_owned());
+                memory_insert(map, key, value);
                 Ok(())
             }
         }
@@ -134,6 +127,7 @@ pub(crate) fn comparable_env_key(key: &str) -> String {
     }
 }
 
+#[cfg(windows)]
 fn memory_entry<'a>(
     map: &'a BTreeMap<String, String>,
     key: &str,
@@ -141,6 +135,47 @@ fn memory_entry<'a>(
     let comparable_key = comparable_env_key(key);
     map.iter()
         .find(|(existing_key, _)| comparable_env_key(existing_key) == comparable_key)
+}
+
+fn memory_contains_key(map: &BTreeMap<String, String>, key: &str) -> bool {
+    #[cfg(not(windows))]
+    {
+        map.contains_key(key)
+    }
+
+    #[cfg(windows)]
+    {
+        memory_entry(map, key).is_some()
+    }
+}
+
+fn memory_get<'a>(map: &'a BTreeMap<String, String>, key: &str) -> Option<&'a String> {
+    #[cfg(not(windows))]
+    {
+        map.get(key)
+    }
+
+    #[cfg(windows)]
+    {
+        memory_entry(map, key).map(|(_, value)| value)
+    }
+}
+
+fn memory_insert(map: &mut BTreeMap<String, String>, key: &str, value: &str) {
+    #[cfg(not(windows))]
+    {
+        map.insert(key.to_owned(), value.to_owned());
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(existing_key) =
+            memory_entry(map, key).map(|(existing_key, _)| existing_key.clone())
+        {
+            map.remove(&existing_key);
+        }
+        map.insert(key.to_owned(), value.to_owned());
+    }
 }
 
 fn validate_process_env_pair(key: &str, value: &str) -> std::io::Result<()> {

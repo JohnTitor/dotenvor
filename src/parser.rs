@@ -56,13 +56,14 @@ pub(crate) fn parse_str_with_source(
 ) -> Result<Vec<Entry>, ParseError> {
     let normalized = normalize_newlines(input);
     let input = normalized.as_ref();
+    let bytes = input.as_bytes();
+    let estimated_statements = bytes.iter().filter(|&&byte| byte == b'\n').count() + 1;
 
-    let mut entries = Vec::new();
-    let mut by_key = HashMap::<String, usize>::new();
+    let mut entries = Vec::with_capacity(estimated_statements);
+    let mut by_key = HashMap::<String, usize>::with_capacity(estimated_statements);
 
     let mut offset = 0usize;
     let mut line_num = 1u32;
-    let bytes = input.as_bytes();
 
     while offset < bytes.len() {
         let statement_start = offset;
@@ -134,21 +135,29 @@ pub(crate) fn parse_str_with_source(
 }
 
 fn normalize_newlines(input: &str) -> Cow<'_, str> {
-    if !input.contains('\r') {
+    let bytes = input.as_bytes();
+    if !bytes.contains(&b'\r') {
         return Cow::Borrowed(input);
     }
 
     let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\r' {
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        if bytes[idx] == b'\r' {
             out.push('\n');
-            if chars.peek() == Some(&'\n') {
-                chars.next();
+            idx += 1;
+            if idx < bytes.len() && bytes[idx] == b'\n' {
+                idx += 1;
             }
             continue;
         }
-        out.push(ch);
+
+        let chunk_start = idx;
+        idx += 1;
+        while idx < bytes.len() && bytes[idx] != b'\r' {
+            idx += 1;
+        }
+        out.push_str(&input[chunk_start..idx]);
     }
 
     Cow::Owned(out)
@@ -195,7 +204,7 @@ fn parse_line(
         return Err(ParseError::new(line_num, 1, ParseErrorKind::MissingKey));
     }
 
-    let Some(eq_idx) = working.find('=') else {
+    let Some(eq_idx) = working.as_bytes().iter().position(|&byte| byte == b'=') else {
         let column = working.chars().count() as u32 + 1;
         return Err(ParseError::new(
             line_num,
