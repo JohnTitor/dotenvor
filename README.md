@@ -19,7 +19,7 @@ It focuses on predictable behavior, low dependency overhead, and an ergonomic AP
 
 ```toml
 [dependencies]
-dotenvor = "0.1"
+dotenvor = "0.2"
 ```
 
 ## MSRV
