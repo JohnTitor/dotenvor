@@ -8,7 +8,7 @@ repository = "https://github.com/JohnTitor/dotenvor"
 documentation = "https://docs.rs/dotenvor"
 categories = ["config", "parser-implementations"]
 keywords = ["dotenv", "env", "configuration", "parser", "loader"]
-readme = "README.md"
+readme = "../README.md"
 description = "Attribute macros for dotenvor"
 
 [lib]
